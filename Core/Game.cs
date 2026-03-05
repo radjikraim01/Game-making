@@ -298,6 +298,18 @@ public sealed class Game : IDisposable
     private Enemy? _currentEnemy;
     private int _enemyPoisoned;
     private bool _warCryAvailable;
+    private int _packEnemiesRemainingAfterCurrent;
+    private bool _encounterActive;
+    private int _encounterRound = 1;
+    private readonly List<Enemy> _encounterEnemies = new();
+    private readonly List<EncounterInitiativeSlot> _encounterTurnOrder = new();
+    private int _encounterTurnIndex;
+    private string _encounterCurrentCombatantId = string.Empty;
+    private int _selectedEncounterTargetIndex = -1;
+    private string _pendingCombatSpellId = string.Empty;
+    private bool _combatMoveModeActive;
+    private int _combatMovePointsMax;
+    private int _combatMovePointsRemaining;
     private bool _resolvingEnemyDeath;
     private int _settingsMasterVolume = 80;
     private bool _settingsVerboseCombatLog = true;
@@ -972,6 +984,12 @@ public sealed class Game : IDisposable
         };
     }
 
+    private int GetPlayerCombatMoveBudget(Player player)
+    {
+        var armorCategory = GetCurrentArmorCategory();
+        return EncounterMovementRules.GetEffectiveMoveBudget(player.Race, armorCategory);
+    }
+
     private string GetArmorTrainingSummary(Player player)
     {
         var classRank = GetClassArmorTrainingRank(player);
@@ -1132,6 +1150,14 @@ public sealed class Game : IDisposable
     private const int ExecutionDoctrineHealPerRank = 2;
     private const int ExecutionDoctrineVanguardHealBonus = 2;
     private const int ExecutionDoctrineArcanistManaPerRank = 1;
+    private const int GoblinPackJoinDistanceTiles = 2;
+    private const int GoblinPackMaxEncounterSize = 3;
+    private const int EncounterReinforcementJoinDistanceTiles = 2;
+    private const int EncounterEnemyTurnCapPerPlayerAction = 24;
+    private const int CombatMeleeRangeTiles = 1;
+    private const int CombatRangedEnemyRangeTiles = 4;
+    private const int EnemyDefaultMoveBudgetTiles = 1;
+    private const int EnemySkirmisherMoveBudgetTiles = 2;
     private const int Phase3SanctumUnlockRequiredKills = 8;
     private const int Phase3SanctumUnlockRequiredRewardNodes = 2;
     private const string Phase3RouteForkNodeId = "phase3_route_fork";
@@ -1203,47 +1229,64 @@ public sealed class Game : IDisposable
 
     private static readonly (int X, int Y, string Key)[] Phase3EntryEnemyPack =
     {
-        (6, 5, "goblin"),
-        (12, 8, "goblin"),
-        (20, 6, "warg"),
-        (24, 6, "skeleton")
+        (6, 5, "goblin_grunt"),
+        (7, 5, "goblin_grunt"),
+        (12, 8, "goblin_grunt"),
+        (13, 8, "goblin_skirmisher"),
+        (12, 9, "goblin_grunt"),
+        (20, 6, "goblin_skirmisher"),
+        (21, 6, "goblin_grunt"),
+        (24, 6, "goblin_slinger")
     };
 
     private static readonly (int X, int Y, string Key)[] Phase3UpperRouteEnemyPack =
     {
-        (29, 9, "cultist"),
-        (38, 6, "skeleton"),
-        (43, 8, "shadow_mage"),
-        (50, 10, "cultist")
+        (29, 9, "goblin_grunt"),
+        (30, 9, "goblin_skirmisher"),
+        (29, 10, "goblin_grunt"),
+        (38, 6, "goblin_slinger"),
+        (39, 6, "goblin_grunt"),
+        (43, 8, "goblin_skirmisher"),
+        (44, 8, "goblin_grunt"),
+        (50, 10, "goblin_supervisor")
     };
 
     private static readonly (int X, int Y, string Key)[] Phase3LowerRouteEnemyPack =
     {
-        (10, 20, "warg"),
-        (16, 24, "skeleton"),
-        (27, 20, "cultist"),
-        (32, 24, "ogre"),
-        (36, 18, "shadow_mage")
+        (10, 20, "goblin_grunt"),
+        (11, 20, "goblin_skirmisher"),
+        (10, 21, "goblin_grunt"),
+        (16, 24, "goblin_slinger"),
+        (17, 24, "goblin_grunt"),
+        (27, 20, "goblin_skirmisher"),
+        (28, 20, "goblin_grunt"),
+        (32, 24, "goblin_supervisor"),
+        (33, 24, "goblin_grunt"),
+        (36, 18, "goblin_slinger")
     };
 
     private static readonly (int X, int Y, string Key)[] Phase3SanctumEnemyPack =
     {
-        (47, 22, "troll"),
-        (54, 24, "ogre"),
-        (55, 30, "dread_knight")
+        (47, 22, "goblin_supervisor"),
+        (48, 22, "goblin_skirmisher"),
+        (47, 23, "goblin_grunt"),
+        (53, 24, "goblin_slinger"),
+        (54, 24, "goblin_supervisor"),
+        (55, 30, "goblin_general")
     };
 
     private static readonly (int X, int Y, string Key)[] Phase3UpperSanctumReinforcementPack =
     {
-        (49, 26, "cultist"),
-        (53, 28, "shadow_mage")
+        (49, 26, "goblin_supervisor"),
+        (50, 26, "goblin_grunt"),
+        (53, 28, "goblin_slinger")
     };
 
     private static readonly LootTemplate[] LowLevelLootTable =
     {
         new()
         {
-            Name = "Field Medkit",
+            Name = "Stolen Bandage Roll",
             Rarity = LootRarity.Common,
             InventoryItemId = "health_potion",
             MinItemQuantity = 1,
@@ -1251,7 +1294,7 @@ public sealed class Game : IDisposable
         },
         new()
         {
-            Name = "Ranger Provisions",
+            Name = "Goblin Field Rations",
             Rarity = LootRarity.Common,
             InventoryItemId = "health_potion",
             MinItemQuantity = 1,
@@ -1259,23 +1302,23 @@ public sealed class Game : IDisposable
         },
         new()
         {
-            Name = "Mana Vial",
-            Rarity = LootRarity.Uncommon,
+            Name = "Dusty Mana Vial",
+            Rarity = LootRarity.Common,
             InventoryItemId = "mana_draught",
             MinItemQuantity = 1,
             MaxItemQuantity = 1
         },
         new()
         {
-            Name = "Sharpening Oil Kit",
-            Rarity = LootRarity.Uncommon,
+            Name = "Pitch Flask",
+            Rarity = LootRarity.Common,
             InventoryItemId = "sharpening_oil",
             MinItemQuantity = 1,
             MaxItemQuantity = 1
         },
         new()
         {
-            Name = "Iron Helm",
+            Name = "Pilfered Iron Helm",
             Rarity = LootRarity.Uncommon,
             InventoryItemId = "iron_helm",
             MinItemQuantity = 1,
@@ -1283,9 +1326,17 @@ public sealed class Game : IDisposable
         },
         new()
         {
-            Name = "Leather Jerkin",
+            Name = "Scuffed Leather Jerkin",
             Rarity = LootRarity.Uncommon,
             InventoryItemId = "leather_jerkin",
+            MinItemQuantity = 1,
+            MaxItemQuantity = 1
+        },
+        new()
+        {
+            Name = "Stolen Focus Belt",
+            Rarity = LootRarity.Uncommon,
+            InventoryItemId = "focus_belt",
             MinItemQuantity = 1,
             MaxItemQuantity = 1
         },
@@ -1294,22 +1345,6 @@ public sealed class Game : IDisposable
             Name = "Brigandine Coat",
             Rarity = LootRarity.Rare,
             InventoryItemId = "brigandine_coat",
-            MinItemQuantity = 1,
-            MaxItemQuantity = 1
-        },
-        new()
-        {
-            Name = "Plate Harness",
-            Rarity = LootRarity.Rare,
-            InventoryItemId = "plate_harness",
-            MinItemQuantity = 1,
-            MaxItemQuantity = 1
-        },
-        new()
-        {
-            Name = "Focus Belt",
-            Rarity = LootRarity.Uncommon,
-            InventoryItemId = "focus_belt",
             MinItemQuantity = 1,
             MaxItemQuantity = 1
         },
@@ -1558,6 +1593,11 @@ public sealed class Game : IDisposable
                 DrawCombatUi();
                 DrawCombatSpellMenu();
                 break;
+            case GameState.CombatSpellTargeting:
+                DrawWorld();
+                DrawCombatUi();
+                DrawCombatSpellTargeting();
+                break;
             case GameState.CombatItemMenu:
                 DrawWorld();
                 DrawCombatUi();
@@ -1608,7 +1648,7 @@ public sealed class Game : IDisposable
         var enemyInfo = _currentEnemy == null
             ? "CurrentEnemy=<null>"
             : $"CurrentEnemy={_currentEnemy.Type.Name} HP={_currentEnemy.CurrentHp}/{_currentEnemy.Type.MaxHp}";
-        return $"State={_gameState} PausedFrom={_pausedFromState} Archetype={GetRunArchetypeLabel(_runArchetype)} Relic={GetRunRelicLabel(_runRelic)} Route={GetPhase3RouteLabel(_phase3RouteChoice)} Zone={GetFloorZoneLabel(_currentFloorZone)} P3Kills={_phase3EnemiesDefeated}/{Phase3SanctumUnlockRequiredKills} P3Rewards={GetClaimedPrimaryRewardCount()}/{Phase3SanctumUnlockRequiredRewardNodes} Milestones={GetMilestoneRanksLabel()} CondMode={(_settingsOptionalConditionsEnabled ? "On" : "Off")} Cond={GetActiveMajorConditionSummary()} EnemiesAlive={_enemies.Count(e => e.IsAlive)} SpritesReady={_spriteLibrary.IsReady} PlayerSprite={_selectedPlayerSpriteId} {playerInfo} {enemyInfo}";
+        return $"State={_gameState} PausedFrom={_pausedFromState} Archetype={GetRunArchetypeLabel(_runArchetype)} Relic={GetRunRelicLabel(_runRelic)} Route={GetPhase3RouteLabel(_phase3RouteChoice)} Zone={GetFloorZoneLabel(_currentFloorZone)} P3Kills={_phase3EnemiesDefeated}/{Phase3SanctumUnlockRequiredKills} P3Rewards={GetClaimedPrimaryRewardCount()}/{Phase3SanctumUnlockRequiredRewardNodes} Milestones={GetMilestoneRanksLabel()} CondMode={(_settingsOptionalConditionsEnabled ? "On" : "Off")} Cond={GetActiveMajorConditionSummary()} EnemiesAlive={_enemies.Count(e => e.IsAlive)} EncActive={_encounterActive} EncSize={_encounterEnemies.Count} EncRound={_encounterRound} EncRem={_packEnemiesRemainingAfterCurrent} EncTurn={_encounterTurnIndex}/{Math.Max(0, _encounterTurnOrder.Count - 1)} EncCurrent={_encounterCurrentCombatantId} MoveMode={_combatMoveModeActive} MovePts={_combatMovePointsRemaining}/{_combatMovePointsMax} SpritesReady={_spriteLibrary.IsReady} PlayerSprite={_selectedPlayerSpriteId} {playerInfo} {enemyInfo}";
     }
 
     private static string GetRunArchetypeLabel(RunArchetype archetype)
@@ -1743,7 +1783,7 @@ public sealed class Game : IDisposable
 
         if (!_bossDefeated)
         {
-            return "Objective: defeat the Dread Knight.";
+            return "Objective: defeat the Goblin General.";
         }
 
         return "Objective: clear remaining hostiles.";
@@ -2519,6 +2559,9 @@ public sealed class Game : IDisposable
 
             case GameState.CombatSpellMenu:
                 HandleCombatSpellInput();
+                break;
+            case GameState.CombatSpellTargeting:
+                HandleCombatSpellTargetingInput();
                 break;
             case GameState.CombatItemMenu:
                 HandleCombatItemInput();
@@ -3653,6 +3696,7 @@ public sealed class Game : IDisposable
         _combatLog.Clear();
         _enemyPoisoned = 0;
         _warCryAvailable = false;
+        ResetEncounterContext();
         _resolvingEnemyDeath = false;
         _selectedRewardOptionIndex = 0;
         _bossDefeated = false;
@@ -3892,7 +3936,7 @@ public sealed class Game : IDisposable
 
         if (_enemies.Any(enemy =>
                 enemy.IsAlive &&
-                string.Equals(ResolveEnemyTypeKey(enemy.Type), "dread_knight", StringComparison.Ordinal)))
+                string.Equals(ResolveEnemyTypeKey(enemy.Type), "goblin_general", StringComparison.Ordinal)))
         {
             _phase3SanctumWaveSpawned = true;
             return;
@@ -4813,12 +4857,27 @@ public sealed class Game : IDisposable
         _selectedSpellIndex = 0;
         _selectedCombatItemIndex = 0;
         _combatItemMenuOffset = 0;
+        _selectedEncounterTargetIndex = -1;
         _enemyPoisoned = 0;
+        ResetEncounterContext();
+        BeginEncounterFromSeed(enemy);
+        SyncEncounterTargetSelection(preferCurrentEnemy: true);
         ResetRelicCombatTriggers();
         ResetMilestoneCombatTriggers();
         _resolvingEnemyDeath = false;
         _combatLog.Clear();
         PushCombatLog($"A {enemy.Type.Name} blocks your path!");
+        if (_encounterEnemies.Count > 1)
+        {
+            PushCombatLog($"Encounter formed: {_encounterEnemies.Count} hostiles.");
+        }
+
+        if (_encounterTurnOrder.Count > 0)
+        {
+            var opener = _encounterTurnOrder[_encounterTurnIndex];
+            PushCombatLog($"Initiative opens with: {opener.Id}.");
+        }
+
         if (_player != null)
         {
             PushCombatLog($"{_player.CharacterClass.Name}: {GetClassCombatTag(_player.CharacterClass.Name)}");
@@ -4829,21 +4888,49 @@ public sealed class Game : IDisposable
         else
         {
             _warCryAvailable = false;
+            _combatMoveModeActive = false;
+            _combatMovePointsMax = 0;
+            _combatMovePointsRemaining = 0;
         }
 
         _gameState = GameState.Combat;
+        if (_player != null && _encounterTurnOrder.Count > 0)
+        {
+            var openingSlot = _encounterTurnOrder[_encounterTurnIndex];
+            if (openingSlot.Kind == EncounterCombatantKind.Player)
+            {
+                SetEncounterTurnToPlayer();
+                BeginPlayerCombatTurn();
+            }
+            else
+            {
+                ResolveEnemyTurnsUntilPlayerTurn();
+            }
+        }
+
         TryAutosaveCheckpoint("combat_start");
     }
 
     private List<string> GetCombatActions()
     {
-        var actions = new List<string> { "Attack" };
+        var actions = new List<string>();
         if (_player != null)
         {
+            if (_combatMovePointsRemaining > 0)
+            {
+                actions.Add("Move");
+            }
+
+            actions.Add("Attack");
             if (GetCombatSkills().Count > 0) actions.Add("Skills");
             if (_player.GetKnownSpells().Count > 0) actions.Add("Spells");
             if (GetCombatConsumables().Count > 0) actions.Add("Items");
         }
+        else
+        {
+            actions.Add("Attack");
+        }
+
         actions.Add("Flee");
         return actions;
     }
@@ -4856,6 +4943,7 @@ public sealed class Game : IDisposable
             return;
         }
 
+        SyncEncounterTargetSelection(preferCurrentEnemy: true);
         if (_player == null || _currentEnemy == null || _resolvingEnemyDeath) return;
         if (!_currentEnemy.IsAlive)
         {
@@ -4863,9 +4951,29 @@ public sealed class Game : IDisposable
             return;
         }
 
+        if (_combatMoveModeActive)
+        {
+            HandleCombatMoveInput();
+            return;
+        }
+
+        SetEncounterTurnToPlayer();
+
         if (Pressed(KeyEscape))
         {
             OpenPauseMenu(GameState.Combat);
+            return;
+        }
+
+        if (Pressed(KeyLeft))
+        {
+            CycleEncounterTarget(-1);
+            return;
+        }
+
+        if (Pressed(KeyRight))
+        {
+            CycleEncounterTarget(1);
             return;
         }
 
@@ -4889,6 +4997,9 @@ public sealed class Game : IDisposable
         var action = actions[_selectedActionIndex];
         switch (action)
         {
+            case "Move":
+                BeginCombatMoveMode();
+                break;
             case "Attack":
                 DoPlayerAttack();
                 break;
@@ -4904,6 +5015,366 @@ public sealed class Game : IDisposable
             case "Flee":
                 DoFlee();
                 break;
+        }
+    }
+
+    private List<Enemy> GetAliveEncounterEnemies()
+    {
+        return _encounterEnemies
+            .Where(enemy => enemy.IsAlive)
+            .ToList();
+    }
+
+    private void SyncEncounterTargetSelection(bool preferCurrentEnemy = false)
+    {
+        var aliveEnemies = GetAliveEncounterEnemies();
+        if (aliveEnemies.Count == 0)
+        {
+            _selectedEncounterTargetIndex = -1;
+            _currentEnemy = null;
+            return;
+        }
+
+        if (preferCurrentEnemy && _currentEnemy != null)
+        {
+            var preferredIndex = aliveEnemies.FindIndex(enemy => ReferenceEquals(enemy, _currentEnemy));
+            if (preferredIndex >= 0)
+            {
+                _selectedEncounterTargetIndex = preferredIndex;
+                _currentEnemy = aliveEnemies[_selectedEncounterTargetIndex];
+                return;
+            }
+        }
+
+        if (_selectedEncounterTargetIndex >= 0 && _selectedEncounterTargetIndex < aliveEnemies.Count)
+        {
+            _currentEnemy = aliveEnemies[_selectedEncounterTargetIndex];
+            return;
+        }
+
+        if (_player != null)
+        {
+            var nearest = aliveEnemies
+                .Select((enemy, index) => new
+                {
+                    Enemy = enemy,
+                    Index = index,
+                    Distance = EncounterTargetingRules.GetTileDistance(_player.X, _player.Y, enemy.X, enemy.Y)
+                })
+                .OrderBy(candidate => candidate.Distance)
+                .ThenBy(candidate => candidate.Enemy.CurrentHp)
+                .First();
+            _selectedEncounterTargetIndex = nearest.Index;
+        }
+        else
+        {
+            _selectedEncounterTargetIndex = 0;
+        }
+
+        _currentEnemy = aliveEnemies[_selectedEncounterTargetIndex];
+    }
+
+    private void CycleEncounterTarget(int direction)
+    {
+        var aliveEnemies = GetAliveEncounterEnemies();
+        if (aliveEnemies.Count <= 1)
+        {
+            SyncEncounterTargetSelection(preferCurrentEnemy: true);
+            return;
+        }
+
+        if (_selectedEncounterTargetIndex < 0 || _selectedEncounterTargetIndex >= aliveEnemies.Count)
+        {
+            SyncEncounterTargetSelection(preferCurrentEnemy: true);
+        }
+
+        if (_selectedEncounterTargetIndex < 0 || _selectedEncounterTargetIndex >= aliveEnemies.Count)
+        {
+            return;
+        }
+
+        _selectedEncounterTargetIndex = EncounterSpellTargetingRules.CycleTargetIndex(
+            _selectedEncounterTargetIndex,
+            aliveEnemies.Count,
+            direction);
+        if (_selectedEncounterTargetIndex < 0 || _selectedEncounterTargetIndex >= aliveEnemies.Count)
+        {
+            return;
+        }
+
+        _currentEnemy = aliveEnemies[_selectedEncounterTargetIndex];
+    }
+
+    private int GetSpellTargetRangeTiles(SpellDefinition spell)
+    {
+        return EncounterSpellTargetingRangePolicy.ResolveSpellRangeTiles(spell);
+    }
+
+    private int GetEnemyAttackRangeTiles(Enemy enemy)
+    {
+        var enemyKey = ResolveEnemyTypeKey(enemy.Type);
+        if (string.Equals(enemyKey, "goblin_slinger", StringComparison.Ordinal))
+        {
+            return CombatRangedEnemyRangeTiles;
+        }
+
+        return CombatMeleeRangeTiles;
+    }
+
+    private int GetEnemyCombatMoveBudget(Enemy enemy)
+    {
+        var enemyKey = ResolveEnemyTypeKey(enemy.Type);
+        return enemyKey switch
+        {
+            "goblin_skirmisher" => EnemySkirmisherMoveBudgetTiles,
+            "warg" => EnemySkirmisherMoveBudgetTiles,
+            _ => EnemyDefaultMoveBudgetTiles
+        };
+    }
+
+    private bool CanEnemyTraverseCombatTile(Enemy movingEnemy, int x, int y)
+    {
+        if (_player == null)
+        {
+            return false;
+        }
+
+        if (IsWallOrSealed(x, y))
+        {
+            return false;
+        }
+
+        // Enemy should not enter player tile during tactical movement.
+        if (_player.X == x && _player.Y == y)
+        {
+            return false;
+        }
+
+        if (_enemies.Any(enemy =>
+                enemy.IsAlive &&
+                !ReferenceEquals(enemy, movingEnemy) &&
+                enemy.X == x &&
+                enemy.Y == y))
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    private bool TryExecuteEnemyTacticalMovement(Enemy enemy, out int movedTiles)
+    {
+        movedTiles = 0;
+        if (_player == null || !enemy.IsAlive)
+        {
+            return false;
+        }
+
+        var moveBudget = GetEnemyCombatMoveBudget(enemy);
+        if (moveBudget <= 0)
+        {
+            return false;
+        }
+
+        var moveDecision = EncounterEnemyTactics.DecideMoveTowardTarget(
+            enemy.X,
+            enemy.Y,
+            _player.X,
+            _player.Y,
+            moveBudget,
+            (x, y) => CanEnemyTraverseCombatTile(enemy, x, y));
+        if (!moveDecision.ShouldMove)
+        {
+            return false;
+        }
+
+        var destination = moveDecision.Destination;
+        if (destination.X == enemy.X && destination.Y == enemy.Y)
+        {
+            return false;
+        }
+
+        enemy.X = destination.X;
+        enemy.Y = destination.Y;
+        movedTiles = moveDecision.Steps.Count;
+        PushCombatLog($"{enemy.Type.Name} repositions {movedTiles} tile{(movedTiles == 1 ? string.Empty : "s")}.");
+        return true;
+    }
+
+    private EncounterTargetValidation ValidateCurrentEnemyTargetForMelee()
+    {
+        if (_player == null || _currentEnemy == null)
+        {
+            return new EncounterTargetValidation(
+                IsLegal: false,
+                DistanceTiles: 0,
+                MaxRangeTiles: CombatMeleeRangeTiles,
+                InRange: false,
+                HasLineOfSight: false,
+                TargetAlive: false);
+        }
+
+        return EncounterTargetingRules.Validate(
+            _player.X,
+            _player.Y,
+            _currentEnemy.X,
+            _currentEnemy.Y,
+            _currentEnemy.IsAlive,
+            CombatMeleeRangeTiles,
+            requiresLineOfSight: true,
+            HasLineOfSight);
+    }
+
+    private EncounterTargetValidation ValidateCurrentEnemyTargetForSpell(SpellDefinition spell)
+    {
+        if (_player == null || _currentEnemy == null)
+        {
+            return new EncounterTargetValidation(
+                IsLegal: false,
+                DistanceTiles: 0,
+                MaxRangeTiles: GetSpellTargetRangeTiles(spell),
+                InRange: false,
+                HasLineOfSight: false,
+                TargetAlive: false);
+        }
+
+        return EncounterSpellTargetingRules.ValidateSpellTarget(
+            spell,
+            _player.X,
+            _player.Y,
+            _currentEnemy.X,
+            _currentEnemy.Y,
+            _currentEnemy.IsAlive,
+            requiresLineOfSight: true,
+            HasLineOfSight);
+    }
+
+    private EncounterTargetValidation ValidateEnemyAttackTarget(Enemy enemy)
+    {
+        if (_player == null || !enemy.IsAlive)
+        {
+            return new EncounterTargetValidation(
+                IsLegal: false,
+                DistanceTiles: 0,
+                MaxRangeTiles: GetEnemyAttackRangeTiles(enemy),
+                InRange: false,
+                HasLineOfSight: false,
+                TargetAlive: false);
+        }
+
+        return EncounterTargetingRules.Validate(
+            enemy.X,
+            enemy.Y,
+            _player.X,
+            _player.Y,
+            _player.IsAlive,
+            GetEnemyAttackRangeTiles(enemy),
+            requiresLineOfSight: true,
+            HasLineOfSight);
+    }
+
+    private void BeginCombatMoveMode()
+    {
+        if (_player == null)
+        {
+            return;
+        }
+
+        if (_combatMovePointsRemaining <= 0)
+        {
+            PushCombatLog("No movement points remaining this turn.");
+            return;
+        }
+
+        _combatMoveModeActive = true;
+        _nextMoveAt = -1;
+        PushCombatLog($"Movement mode: {_combatMovePointsRemaining} tiles available.");
+    }
+
+    private bool CanTraverseCombatTile(int x, int y)
+    {
+        if (_player == null)
+        {
+            return false;
+        }
+
+        if (IsWallOrSealed(x, y))
+        {
+            return false;
+        }
+
+        if (_player.X == x && _player.Y == y)
+        {
+            return true;
+        }
+
+        if (_enemies.Any(enemy => enemy.IsAlive && enemy.X == x && enemy.Y == y))
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    private IReadOnlyCollection<(int X, int Y)> BuildPlayerReachableCombatTiles()
+    {
+        if (_player == null || _combatMovePointsRemaining <= 0)
+        {
+            return Array.Empty<(int X, int Y)>();
+        }
+
+        return EncounterMovementRules.BuildReachableTiles(
+            _player.X,
+            _player.Y,
+            _combatMovePointsRemaining,
+            CanTraverseCombatTile);
+    }
+
+    private void HandleCombatMoveInput()
+    {
+        if (_player == null)
+        {
+            _combatMoveModeActive = false;
+            return;
+        }
+
+        if (Pressed(KeyEscape) || Pressed(KeyEnter))
+        {
+            _combatMoveModeActive = false;
+            _nextMoveAt = -1;
+            return;
+        }
+
+        if (_combatMovePointsRemaining <= 0)
+        {
+            _combatMoveModeActive = false;
+            _nextMoveAt = -1;
+            return;
+        }
+
+        if (!TryGetMoveDelta(out var moveX, out var moveY))
+        {
+            return;
+        }
+
+        var targetX = _player.X + moveX;
+        var targetY = _player.Y + moveY;
+        if (!CanTraverseCombatTile(targetX, targetY))
+        {
+            return;
+        }
+
+        _player.X = targetX;
+        _player.Y = targetY;
+        _playerRunAnimUntil = Raylib.GetTime() + 0.14;
+        _combatMovePointsRemaining = Math.Max(0, _combatMovePointsRemaining - 1);
+        SyncEncounterTargetSelection(preferCurrentEnemy: true);
+
+        if (_combatMovePointsRemaining <= 0)
+        {
+            _combatMoveModeActive = false;
+            _nextMoveAt = -1;
+            PushCombatLog("Movement exhausted for this turn.");
         }
     }
 
@@ -4936,6 +5407,7 @@ public sealed class Game : IDisposable
     {
         if (_player == null) return;
         if (GetCombatSkills().Count == 0) return;
+        ClearPendingCombatSpell();
         _selectedCombatSkillIndex = 0;
         _gameState = GameState.CombatSkillMenu;
     }
@@ -4948,6 +5420,7 @@ public sealed class Game : IDisposable
             return;
         }
 
+        SyncEncounterTargetSelection(preferCurrentEnemy: true);
         if (_player == null || _currentEnemy == null)
         {
             _gameState = GameState.Combat;
@@ -5013,6 +5486,7 @@ public sealed class Game : IDisposable
     {
         if (_player == null) return;
         if (_player.GetKnownSpells().Count == 0) return;
+        ClearPendingCombatSpell();
         _selectedSpellIndex = 0;
         _spellMenuOffset = 0;
         _gameState = GameState.CombatSpellMenu;
@@ -5022,9 +5496,37 @@ public sealed class Game : IDisposable
     {
         if (_player == null) return;
         if (GetCombatConsumables().Count == 0) return;
+        ClearPendingCombatSpell();
         _selectedCombatItemIndex = 0;
         _combatItemMenuOffset = 0;
         _gameState = GameState.CombatItemMenu;
+    }
+
+    private void ClearPendingCombatSpell()
+    {
+        _pendingCombatSpellId = string.Empty;
+    }
+
+    private bool TryGetPendingCombatSpell(out SpellDefinition spell)
+    {
+        spell = null!;
+        if (_player == null || string.IsNullOrWhiteSpace(_pendingCombatSpellId))
+        {
+            return false;
+        }
+
+        var pendingSpell = _player
+            .GetKnownSpells()
+            .FirstOrDefault(candidate =>
+                string.Equals(candidate.Id, _pendingCombatSpellId, StringComparison.Ordinal));
+        if (pendingSpell == null)
+        {
+            ClearPendingCombatSpell();
+            return false;
+        }
+
+        spell = pendingSpell;
+        return true;
     }
 
     private void HandleCombatSpellInput()
@@ -5035,8 +5537,10 @@ public sealed class Game : IDisposable
             return;
         }
 
+        SyncEncounterTargetSelection(preferCurrentEnemy: true);
         if (_player == null || _currentEnemy == null)
         {
+            ClearPendingCombatSpell();
             _gameState = GameState.Combat;
             return;
         }
@@ -5044,12 +5548,14 @@ public sealed class Game : IDisposable
         var spells = _player.GetKnownSpells();
         if (spells.Count == 0)
         {
+            ClearPendingCombatSpell();
             _gameState = GameState.Combat;
             return;
         }
 
         if (Pressed(KeyEscape))
         {
+            ClearPendingCombatSpell();
             _gameState = GameState.Combat;
             return;
         }
@@ -5071,8 +5577,63 @@ public sealed class Game : IDisposable
         if (!Pressed(KeyEnter)) return;
 
         var chosenSpell = spells[Math.Min(_selectedSpellIndex, spells.Count - 1)];
+        _pendingCombatSpellId = chosenSpell.Id;
+        _gameState = GameState.CombatSpellTargeting;
+    }
+
+    private void HandleCombatSpellTargetingInput()
+    {
+        if (_player != null && !_player.IsAlive)
+        {
+            HandlePlayerDeath();
+            return;
+        }
+
+        SyncEncounterTargetSelection(preferCurrentEnemy: true);
+        if (_player == null || _currentEnemy == null)
+        {
+            ClearPendingCombatSpell();
+            _gameState = GameState.Combat;
+            return;
+        }
+
+        if (!TryGetPendingCombatSpell(out var pendingSpell))
+        {
+            _gameState = GameState.CombatSpellMenu;
+            return;
+        }
+
+        if (Pressed(KeyEscape))
+        {
+            ClearPendingCombatSpell();
+            _gameState = GameState.CombatSpellMenu;
+            return;
+        }
+
+        if (Pressed(KeyLeft))
+        {
+            CycleEncounterTarget(-1);
+            return;
+        }
+
+        if (Pressed(KeyRight))
+        {
+            CycleEncounterTarget(1);
+            return;
+        }
+
+        if (!Pressed(KeyEnter)) return;
+
+        var spellValidation = ValidateCurrentEnemyTargetForSpell(pendingSpell);
+        if (!spellValidation.IsLegal)
+        {
+            PushCombatLog($"{pendingSpell.Name} blocked: {spellValidation.BuildBlockedReason()}");
+            return;
+        }
+
+        ClearPendingCombatSpell();
         _gameState = GameState.Combat;
-        CastCombatSpell(chosenSpell);
+        CastCombatSpell(pendingSpell);
     }
 
     private void HandleCombatItemInput()
@@ -5083,6 +5644,7 @@ public sealed class Game : IDisposable
             return;
         }
 
+        SyncEncounterTargetSelection(preferCurrentEnemy: true);
         if (_player == null || _currentEnemy == null)
         {
             _gameState = GameState.Combat;
@@ -5224,6 +5786,12 @@ public sealed class Game : IDisposable
     private void CastCombatSpell(SpellDefinition spell)
     {
         if (_player == null || _currentEnemy == null || _gameState == GameState.DeathScreen) return;
+        var targetValidation = ValidateCurrentEnemyTargetForSpell(spell);
+        if (!targetValidation.IsLegal)
+        {
+            PushCombatLog($"{spell.Name} blocked: {targetValidation.BuildBlockedReason()}");
+            return;
+        }
 
         var milestoneSlotWaive = false;
         if (spell.RequiresSlot)
@@ -5273,7 +5841,14 @@ public sealed class Game : IDisposable
         }
 
         if (CheckEnemyDeath()) return;
-        if (shouldCounterAttack) DoEnemyAttack();
+        if (shouldCounterAttack)
+        {
+            DoEnemyAttack();
+        }
+        else
+        {
+            DoEnemyAttack(skipFirstEnemyTurn: true);
+        }
     }
 
     private (int damage, int rawDamage, int armorMitigation, int statPower) CalcSpellDamage(StatName scaleStat, int baseDamage, int variance, int armorBypass)
@@ -5533,6 +6108,12 @@ public sealed class Game : IDisposable
     private void DoPlayerAttack()
     {
         if (_player == null || _currentEnemy == null) return;
+        var validation = ValidateCurrentEnemyTargetForMelee();
+        if (!validation.IsLegal)
+        {
+            PushCombatLog($"Attack blocked: {validation.BuildBlockedReason()}");
+            return;
+        }
 
         var warCryDamage = 0;
         if (_warCryAvailable && _player.HasSkill("war_cry"))
@@ -5602,21 +6183,9 @@ public sealed class Game : IDisposable
 
         _player.CurrentMana -= 3;
         var absorb = _player.ManaShieldAbsorb;
-        var armorStyleDefense = GetArmorStateDefenseBonus(_player);
-        var totalDefense = _player.DefenseBonus + GetClassDefenseBonus(_player) + _runDefenseBonus + armorStyleDefense + GetConditionDefenseModifier();
-        var enemyAttackBonus = _enemyLootKits.TryGetValue(_currentEnemy, out var enemyLoot)
-            ? enemyLoot.AttackBonus
-            : 0;
-        var rawEnemyRoll = _currentEnemy.Type.Attack + enemyAttackBonus + _rng.Next(4) - 1;
-        var raw = Math.Max(0, rawEnemyRoll - absorb);
-        var damage = Math.Max(0, CombatMath.CalculateEnemyDamage(raw, totalDefense, minimumDamage: 0));
-        _player.CurrentHp = Math.Max(0, _player.CurrentHp - damage);
-        PushCombatLog($"Mana Shield absorbs {absorb}; you take {damage}.");
-        PushCombatLog($"Enemy roll {raw + absorb} - absorb {absorb} - defense {totalDefense}.");
-        PushCombatLog($"HP {_player.CurrentHp}/{_player.MaxHp}  MP {_player.CurrentMana}/{_player.MaxMana}.");
-        TryRollDungeonConditionFromEnemyHit(damage);
-
-        if (!_player.IsAlive) HandlePlayerDeath();
+        PushCombatLog($"Mana Shield primed ({absorb} absorb).");
+        PushCombatLog($"MP {_player.CurrentMana}/{_player.MaxMana}.");
+        DoEnemyAttack(firstEnemyDamageAbsorb: absorb);
     }
 
     private bool TryEnemyUseCombatLoot(Enemy enemy)
@@ -5667,36 +6236,233 @@ public sealed class Game : IDisposable
         }
     }
 
-    private void DoEnemyAttack()
+    private Enemy? FindEncounterEnemyByCombatantId(string combatantId)
     {
-        if (_player == null || _currentEnemy == null) return;
-        if (_gameState == GameState.DeathScreen || !_player.IsAlive) return;
-        if (TryEnemyUseCombatLoot(_currentEnemy))
+        foreach (var enemy in _encounterEnemies)
         {
+            if (!enemy.IsAlive)
+            {
+                continue;
+            }
+
+            if (string.Equals(BuildEncounterEnemyCombatantId(enemy), combatantId, StringComparison.Ordinal))
+            {
+                return enemy;
+            }
+        }
+
+        return null;
+    }
+
+    private void DoEnemyAttack(int firstEnemyDamageAbsorb = 0, bool skipFirstEnemyTurn = false)
+    {
+        if (_player == null)
+        {
+            return;
+        }
+
+        if (_gameState == GameState.DeathScreen || !_player.IsAlive)
+        {
+            HandlePlayerDeath();
+            return;
+        }
+
+        PruneEncounterTurnOrder();
+        if (_encounterTurnOrder.Count == 0)
+        {
+            RebuildEncounterTurnOrder(preferredCombatantId: "player");
+        }
+
+        if (_encounterTurnOrder.Count == 0)
+        {
+            SetEncounterTurnToPlayer();
+            BeginPlayerCombatTurn();
+            return;
+        }
+
+        SetEncounterTurnToPlayer();
+        AdvanceEncounterTurn();
+        ResolveEnemyTurnsUntilPlayerTurn(firstEnemyDamageAbsorb, skipFirstEnemyTurn);
+    }
+
+    private void ResolveEnemyTurnsUntilPlayerTurn(int firstEnemyDamageAbsorb = 0, bool skipFirstEnemyTurn = false)
+    {
+        if (_player == null)
+        {
+            return;
+        }
+
+        if (_gameState == GameState.DeathScreen || !_player.IsAlive)
+        {
+            HandlePlayerDeath();
+            return;
+        }
+
+        var pendingDamageAbsorb = Math.Max(0, firstEnemyDamageAbsorb);
+        var skipNextEnemyTurn = skipFirstEnemyTurn;
+        var processedEnemyTurns = 0;
+
+        while (processedEnemyTurns < EncounterEnemyTurnCapPerPlayerAction)
+        {
+            if (_player == null || !_player.IsAlive || _gameState == GameState.DeathScreen)
+            {
+                HandlePlayerDeath();
+                return;
+            }
+
+            if (_gameState != GameState.Combat)
+            {
+                return;
+            }
+
+            if (_resolvingEnemyDeath || _defeatedEnemyPending != null || _enemyResolveAt > 0)
+            {
+                return;
+            }
+
+            TryJoinEncounterReinforcements();
+            PruneEncounterTurnOrder();
+            if (_encounterTurnOrder.Count == 0)
+            {
+                return;
+            }
+
+            SyncEncounterCurrentCombatantId();
+            var slot = _encounterTurnOrder[_encounterTurnIndex];
+            if (slot.Kind == EncounterCombatantKind.Player)
+            {
+                SetEncounterTurnToPlayer();
+                BeginPlayerCombatTurn();
+                return;
+            }
+
+            var actingEnemy = FindEncounterEnemyByCombatantId(slot.Id);
+            if (actingEnemy == null)
+            {
+                AdvanceEncounterTurn();
+                processedEnemyTurns += 1;
+                continue;
+            }
+
+            _currentEnemy = actingEnemy;
+            SetEncounterTurnToEnemy(actingEnemy);
+            _packEnemiesRemainingAfterCurrent = Math.Max(0, _encounterEnemies.Count(enemy =>
+                enemy.IsAlive &&
+                !ReferenceEquals(enemy, _currentEnemy)));
+
+            if (skipNextEnemyTurn)
+            {
+                skipNextEnemyTurn = false;
+            }
+            else
+            {
+                ExecuteEnemyTurn(actingEnemy, pendingDamageAbsorb);
+                pendingDamageAbsorb = 0;
+
+                if (_player == null || !_player.IsAlive || _gameState == GameState.DeathScreen)
+                {
+                    HandlePlayerDeath();
+                    return;
+                }
+
+                if (_resolvingEnemyDeath || _defeatedEnemyPending != null || _enemyResolveAt > 0)
+                {
+                    return;
+                }
+            }
+
+            AdvanceEncounterTurn();
+            processedEnemyTurns += 1;
+        }
+
+        PushCombatLog($"Enemy phase capped at {EncounterEnemyTurnCapPerPlayerAction} turns.");
+        SetEncounterTurnToPlayer();
+        BeginPlayerCombatTurn();
+    }
+
+    private void ExecuteEnemyTurn(Enemy enemy, int damageAbsorb)
+    {
+        if (_player == null || !enemy.IsAlive)
+        {
+            return;
+        }
+
+        if (TryEnemyUseCombatLoot(enemy))
+        {
+            return;
+        }
+
+        var attackDecision = EncounterEnemyTactics.EvaluateAttackFeasibility(
+            attackerX: enemy.X,
+            attackerY: enemy.Y,
+            targetX: _player.X,
+            targetY: _player.Y,
+            targetAlive: _player.IsAlive,
+            maxRangeTiles: GetEnemyAttackRangeTiles(enemy),
+            requiresLineOfSight: true,
+            hasLineOfSight: HasLineOfSight);
+
+        var moved = false;
+        if (!attackDecision.CanAttack)
+        {
+            moved = TryExecuteEnemyTacticalMovement(enemy, out _);
+            if (moved)
+            {
+                attackDecision = EncounterEnemyTactics.EvaluateAttackFeasibility(
+                    attackerX: enemy.X,
+                    attackerY: enemy.Y,
+                    targetX: _player.X,
+                    targetY: _player.Y,
+                    targetAlive: _player.IsAlive,
+                    maxRangeTiles: GetEnemyAttackRangeTiles(enemy),
+                    requiresLineOfSight: true,
+                    hasLineOfSight: HasLineOfSight);
+            }
+        }
+
+        if (!attackDecision.CanAttack)
+        {
+            var reason = attackDecision.Validation.BuildBlockedReason();
+            var prefix = moved
+                ? $"{enemy.Type.Name} still cannot get a clear attack"
+                : $"{enemy.Type.Name} cannot get a clear attack";
+            PushCombatLog($"{prefix} ({reason}).");
             return;
         }
 
         var evadeChance = GetClassEvasionChance(_player);
         if (evadeChance > 0 && _rng.Next(100) < evadeChance)
         {
-            PushCombatLog($"{_currentEnemy.Type.Name} attacks, but you evade!");
+            PushCombatLog($"{enemy.Type.Name} attacks, but you evade!");
             return;
         }
 
         var armorStyleDefense = GetArmorStateDefenseBonus(_player);
         var totalDefense = _player.DefenseBonus + GetClassDefenseBonus(_player) + _runDefenseBonus + armorStyleDefense + GetConditionDefenseModifier();
-        var enemyAttackBonus = _enemyLootKits.TryGetValue(_currentEnemy, out var enemyLoot)
+        var enemyAttackBonus = _enemyLootKits.TryGetValue(enemy, out var enemyLoot)
             ? enemyLoot.AttackBonus
             : 0;
-        var raw = _currentEnemy.Type.Attack + enemyAttackBonus + _phase3EnemyAttackBonus + _rng.Next(4) - 1;
-        var damage = CombatMath.CalculateEnemyDamage(raw, totalDefense);
+        var rawEnemyRoll = enemy.Type.Attack + enemyAttackBonus + _phase3EnemyAttackBonus + _rng.Next(4) - 1;
+        var clampedAbsorb = Math.Max(0, damageAbsorb);
+        var adjustedRaw = Math.Max(0, rawEnemyRoll - clampedAbsorb);
+        var damage = clampedAbsorb > 0
+            ? Math.Max(0, CombatMath.CalculateEnemyDamage(adjustedRaw, totalDefense, minimumDamage: 0))
+            : CombatMath.CalculateEnemyDamage(rawEnemyRoll, totalDefense);
+
         _player.CurrentHp = Math.Max(0, _player.CurrentHp - damage);
-        PushCombatLog($"{_currentEnemy.Type.Name} hits for {damage}.");
-        PushCombatLog($"Enemy roll {raw} - defense {totalDefense}.");
+        if (clampedAbsorb > 0)
+        {
+            PushCombatLog($"Mana Shield absorbs {clampedAbsorb}; you take {damage}.");
+            PushCombatLog($"Enemy roll {rawEnemyRoll} - absorb {clampedAbsorb} - defense {totalDefense}.");
+        }
+        else
+        {
+            PushCombatLog($"{enemy.Type.Name} hits for {damage}.");
+            PushCombatLog($"Enemy roll {rawEnemyRoll} - defense {totalDefense}.");
+        }
+
         PushCombatLog($"Your HP {_player.CurrentHp}/{_player.MaxHp}.");
         TryRollDungeonConditionFromEnemyHit(damage);
-
-        if (!_player.IsAlive) HandlePlayerDeath();
     }
 
     private void DoFlee()
@@ -5725,6 +6491,7 @@ public sealed class Game : IDisposable
         {
             PushCombatLog("You fled from battle!");
             _currentEnemy = null;
+            ResetEncounterContext();
             EnterPlayingState("flee_success");
         }
         else
@@ -5737,6 +6504,8 @@ public sealed class Game : IDisposable
                 {
                     PushCombatLog("Skirmisher rhythm keeps your momentum.");
                 }
+
+                DoEnemyAttack(skipFirstEnemyTurn: true);
                 return;
             }
 
@@ -5811,9 +6580,30 @@ public sealed class Game : IDisposable
         }
 
         var enemyKey = ResolveEnemyTypeKey(enemy.Type);
-        if (string.Equals(enemyKey, "dread_knight", StringComparison.Ordinal))
+        if (string.Equals(enemyKey, "goblin_general", StringComparison.Ordinal))
         {
             return PickFrom(rare, common);
+        }
+
+        if (string.Equals(enemyKey, "goblin_supervisor", StringComparison.Ordinal))
+        {
+            if (_rng.NextDouble() < 0.45)
+            {
+                return PickFrom(rare, uncommon);
+            }
+
+            return PickFrom(uncommon, common);
+        }
+
+        if (string.Equals(enemyKey, "goblin_slinger", StringComparison.Ordinal) ||
+            string.Equals(enemyKey, "goblin_skirmisher", StringComparison.Ordinal))
+        {
+            if (_rng.NextDouble() < 0.40)
+            {
+                return PickFrom(uncommon, common);
+            }
+
+            return PickFrom(common, LowLevelLootTable);
         }
 
         if (enemy.Type.XpReward >= 170 && _rng.NextDouble() < 0.35)
@@ -5884,10 +6674,10 @@ public sealed class Game : IDisposable
         }
         var didLevelUp = _player.GainXp(xp);
         ApplyMilestoneExecutionRewardOnEnemyDefeat();
-        if (string.Equals(ResolveEnemyTypeKey(defeatedEnemy.Type), "dread_knight", StringComparison.Ordinal))
+        if (string.Equals(ResolveEnemyTypeKey(defeatedEnemy.Type), "goblin_general", StringComparison.Ordinal))
         {
             _bossDefeated = true;
-            PushCombatLog("The Dread Knight is down. The sanctum trembles.");
+            PushCombatLog("The Goblin General is down. The sanctum trembles.");
         }
 
         // Counterplay rule: every defeated enemy drops loot so the player can choose loot-first vs fight-first.
@@ -5899,12 +6689,18 @@ public sealed class Game : IDisposable
         if (ReferenceEquals(_currentEnemy, defeatedEnemy)) _currentEnemy = null;
         _resolvingEnemyDeath = false;
 
+        if (!didLevelUp && TryPromoteNextGoblinPackEnemy(defeatedEnemy))
+        {
+            return;
+        }
+
         if (_enemies.Count == 0)
         {
             if (_bossDefeated)
             {
                 _floorCleared = true;
                 PushCombatLog("All hostiles eliminated. Floor 1 cleared.");
+                ResetEncounterContext();
                 _gameState = GameState.VictoryScreen;
                 TryAutosaveCheckpoint("floor1_cleared");
                 return;
@@ -5925,11 +6721,13 @@ public sealed class Game : IDisposable
 
         if (didLevelUp)
         {
+            ResetEncounterContext();
             _selectionMessage = string.Empty;
             _gameState = GameState.LevelUp;
         }
         else
         {
+            ResetEncounterContext();
             EnterPlayingState("combat_victory");
         }
     }
@@ -5944,6 +6742,7 @@ public sealed class Game : IDisposable
         _currentEnemy = null;
         _enemyPoisoned = 0;
         _warCryAvailable = false;
+        ResetEncounterContext();
         PushCombatLog("You have been defeated...");
         _gameState = GameState.DeathScreen;
     }
@@ -6281,6 +7080,7 @@ public sealed class Game : IDisposable
             return;
         }
 
+        ResetEncounterContext();
         _gameState = GameState.Playing;
         if (!string.IsNullOrWhiteSpace(autosaveReason))
         {
@@ -7328,6 +8128,12 @@ public sealed class Game : IDisposable
         _currentEnemy = resumeState == GameState.Combat ? restoredCurrentEnemy : null;
         _enemyPoisoned = Math.Max(0, snapshot.EnemyPoisoned);
         _warCryAvailable = snapshot.WarCryAvailable;
+        ResetEncounterContext();
+        if (_currentEnemy != null)
+        {
+            BeginEncounterFromSeed(_currentEnemy);
+            BeginPlayerCombatTurn();
+        }
         _resolvingEnemyDeath = false;
         _enemyResolveAt = -1;
         _defeatedEnemyPending = null;
@@ -7364,7 +8170,7 @@ public sealed class Game : IDisposable
         _phase3SanctumLockNoticeShown = false;
         if (_enemies.Any(enemy =>
                 enemy.IsAlive &&
-                string.Equals(ResolveEnemyTypeKey(enemy.Type), "dread_knight", StringComparison.Ordinal)))
+                string.Equals(ResolveEnemyTypeKey(enemy.Type), "goblin_general", StringComparison.Ordinal)))
         {
             _phase3SanctumWaveSpawned = true;
         }
@@ -7513,6 +8319,7 @@ public sealed class Game : IDisposable
         _spellMenuOffset = 0;
         _characterSheetScroll = 0;
         _nextMoveAt = -1;
+        ClearPendingCombatSpell();
         ResetLootPickupState();
         ClearRewardMessage();
     }
@@ -7524,7 +8331,7 @@ public sealed class Game : IDisposable
 
     private static bool IsCombatState(GameState state)
     {
-        return GameStateRules.IsCombatState(state);
+        return state == GameState.CombatSpellTargeting || GameStateRules.IsCombatState(state);
     }
 
     private static string? ResolveEnemyTypeKey(EnemyType type)
@@ -7539,6 +8346,474 @@ public sealed class Game : IDisposable
         }
 
         return null;
+    }
+
+    private static bool IsGoblinEnemyKey(string? enemyKey)
+    {
+        return !string.IsNullOrWhiteSpace(enemyKey) &&
+               enemyKey.StartsWith("goblin", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string BuildEncounterEnemyCombatantId(Enemy enemy)
+    {
+        var enemyKey = ResolveEnemyTypeKey(enemy.Type);
+        var normalizedKey = string.IsNullOrWhiteSpace(enemyKey)
+            ? enemy.Type.Name.Replace(' ', '_').ToLowerInvariant()
+            : enemyKey;
+        return $"{normalizedKey}:{enemy.SpawnX},{enemy.SpawnY}";
+    }
+
+    private static bool AreEncounterAllies(string? leftEnemyKey, string? rightEnemyKey)
+    {
+        if (IsGoblinEnemyKey(leftEnemyKey) && IsGoblinEnemyKey(rightEnemyKey))
+        {
+            return true;
+        }
+
+        return string.Equals(leftEnemyKey, rightEnemyKey, StringComparison.Ordinal);
+    }
+
+    private void ResetEncounterContext()
+    {
+        ClearPendingCombatSpell();
+        _encounterActive = false;
+        _encounterRound = 1;
+        _encounterEnemies.Clear();
+        _encounterTurnOrder.Clear();
+        _encounterTurnIndex = 0;
+        _encounterCurrentCombatantId = string.Empty;
+        _selectedEncounterTargetIndex = -1;
+        _packEnemiesRemainingAfterCurrent = 0;
+        _combatMoveModeActive = false;
+        _combatMovePointsMax = 0;
+        _combatMovePointsRemaining = 0;
+    }
+
+    private void SyncEncounterCurrentCombatantId()
+    {
+        if (_encounterTurnOrder.Count == 0)
+        {
+            _encounterTurnIndex = 0;
+            _encounterCurrentCombatantId = string.Empty;
+            return;
+        }
+
+        _encounterTurnIndex = Math.Clamp(_encounterTurnIndex, 0, _encounterTurnOrder.Count - 1);
+        _encounterCurrentCombatantId = _encounterTurnOrder[_encounterTurnIndex].Id;
+    }
+
+    private void RebuildEncounterTurnOrder(string? preferredCombatantId = null)
+    {
+        var preservedCombatantId = string.IsNullOrWhiteSpace(preferredCombatantId)
+            ? _encounterCurrentCombatantId
+            : preferredCombatantId;
+        _encounterTurnOrder.Clear();
+        if (!_encounterActive || _player == null)
+        {
+            _encounterTurnIndex = 0;
+            _encounterCurrentCombatantId = string.Empty;
+            return;
+        }
+
+        var candidates = new List<EncounterInitiativeParticipant>
+        {
+            new(
+                Id: "player",
+                Kind: EncounterCombatantKind.Player,
+                InitiativeModifier: _player.Mod(StatName.Dexterity),
+                StableOrder: 0)
+        };
+
+        var stableOrder = 1;
+        foreach (var enemy in _encounterEnemies.Where(enemy => enemy.IsAlive))
+        {
+            candidates.Add(new EncounterInitiativeParticipant(
+                Id: BuildEncounterEnemyCombatantId(enemy),
+                Kind: EncounterCombatantKind.Enemy,
+                InitiativeModifier: Math.Max(0, enemy.Type.Attack / 4),
+                StableOrder: stableOrder));
+            stableOrder += 1;
+        }
+
+        var initiativeSeed = HashCode.Combine(
+            _encounterEnemies.Count,
+            _encounterRound,
+            _phase3EnemiesDefeated,
+            _player.Level,
+            _player.Stats.Dexterity);
+
+        _encounterTurnOrder.AddRange(EncounterInitiative.BuildOrder(candidates, initiativeSeed));
+        if (_encounterTurnOrder.Count == 0)
+        {
+            _encounterTurnIndex = 0;
+            _encounterCurrentCombatantId = string.Empty;
+            return;
+        }
+
+        var preservedIndex = string.IsNullOrWhiteSpace(preservedCombatantId)
+            ? -1
+            : _encounterTurnOrder.FindIndex(slot =>
+                string.Equals(slot.Id, preservedCombatantId, StringComparison.Ordinal));
+        if (preservedIndex >= 0)
+        {
+            _encounterTurnIndex = preservedIndex;
+        }
+        else
+        {
+            _encounterTurnIndex = 0;
+        }
+
+        SyncEncounterCurrentCombatantId();
+    }
+
+    private void PruneEncounterTurnOrder()
+    {
+        if (_encounterTurnOrder.Count == 0)
+        {
+            _encounterCurrentCombatantId = string.Empty;
+            _encounterTurnIndex = 0;
+            return;
+        }
+
+        var preservedCombatantId = _encounterCurrentCombatantId;
+        var aliveEnemyIds = _encounterEnemies
+            .Where(enemy => enemy.IsAlive)
+            .Select(BuildEncounterEnemyCombatantId)
+            .ToHashSet(StringComparer.Ordinal);
+
+        _encounterTurnOrder.RemoveAll(slot =>
+            slot.Kind switch
+            {
+                EncounterCombatantKind.Player => _player == null || !_player.IsAlive,
+                EncounterCombatantKind.Enemy => !aliveEnemyIds.Contains(slot.Id),
+                _ => true
+            });
+
+        if (!string.IsNullOrWhiteSpace(preservedCombatantId))
+        {
+            var preservedIndex = _encounterTurnOrder.FindIndex(slot =>
+                string.Equals(slot.Id, preservedCombatantId, StringComparison.Ordinal));
+            if (preservedIndex >= 0)
+            {
+                _encounterTurnIndex = preservedIndex;
+            }
+        }
+
+        SyncEncounterCurrentCombatantId();
+    }
+
+    private void SetEncounterTurnToPlayer()
+    {
+        if (_encounterTurnOrder.Count == 0)
+        {
+            return;
+        }
+
+        var playerIndex = _encounterTurnOrder.FindIndex(slot => slot.Kind == EncounterCombatantKind.Player);
+        if (playerIndex >= 0)
+        {
+            _encounterTurnIndex = playerIndex;
+            SyncEncounterCurrentCombatantId();
+        }
+    }
+
+    private void BeginPlayerCombatTurn()
+    {
+        if (_player == null)
+        {
+            _selectedEncounterTargetIndex = -1;
+            _currentEnemy = null;
+            _combatMoveModeActive = false;
+            _combatMovePointsMax = 0;
+            _combatMovePointsRemaining = 0;
+            return;
+        }
+
+        TryJoinEncounterReinforcements();
+        PruneEncounterTurnOrder();
+        SetEncounterTurnToPlayer();
+        SyncEncounterTargetSelection(preferCurrentEnemy: true);
+        _combatMoveModeActive = false;
+        _nextMoveAt = -1;
+        _combatMovePointsMax = GetPlayerCombatMoveBudget(_player);
+        _combatMovePointsRemaining = _combatMovePointsMax;
+        _packEnemiesRemainingAfterCurrent = Math.Max(0, _encounterEnemies.Count(enemy =>
+            enemy.IsAlive &&
+            !ReferenceEquals(enemy, _currentEnemy)));
+    }
+
+    private void SetEncounterTurnToEnemy(Enemy enemy)
+    {
+        if (_encounterTurnOrder.Count == 0)
+        {
+            return;
+        }
+
+        var targetId = BuildEncounterEnemyCombatantId(enemy);
+        var enemyIndex = _encounterTurnOrder.FindIndex(slot =>
+            slot.Kind == EncounterCombatantKind.Enemy &&
+            string.Equals(slot.Id, targetId, StringComparison.Ordinal));
+
+        if (enemyIndex >= 0)
+        {
+            _encounterTurnIndex = enemyIndex;
+            SyncEncounterCurrentCombatantId();
+        }
+
+        var aliveEnemies = GetAliveEncounterEnemies();
+        var selectedIndex = aliveEnemies.FindIndex(candidate => ReferenceEquals(candidate, enemy));
+        if (selectedIndex >= 0)
+        {
+            _selectedEncounterTargetIndex = selectedIndex;
+            _currentEnemy = aliveEnemies[selectedIndex];
+        }
+    }
+
+    private void AdvanceEncounterTurn()
+    {
+        if (_encounterTurnOrder.Count == 0)
+        {
+            _encounterCurrentCombatantId = string.Empty;
+            _encounterTurnIndex = 0;
+            return;
+        }
+
+        var previousIndex = _encounterTurnIndex;
+        _encounterTurnIndex = EncounterInitiative.AdvanceTurnIndex(_encounterTurnIndex, _encounterTurnOrder.Count);
+        if (_encounterTurnIndex <= previousIndex)
+        {
+            _encounterRound += 1;
+        }
+
+        SyncEncounterCurrentCombatantId();
+    }
+
+    private void BeginEncounterFromSeed(Enemy seedEnemy)
+    {
+        _encounterActive = true;
+        _encounterRound = 1;
+        _encounterEnemies.Clear();
+        _encounterEnemies.Add(seedEnemy);
+
+        var seedEnemyKey = ResolveEnemyTypeKey(seedEnemy.Type);
+        foreach (var enemy in _enemies)
+        {
+            if (ReferenceEquals(enemy, seedEnemy) || !enemy.IsAlive)
+            {
+                continue;
+            }
+
+            var enemyKey = ResolveEnemyTypeKey(enemy.Type);
+            if (!AreEncounterAllies(seedEnemyKey, enemyKey))
+            {
+                continue;
+            }
+
+            var distance = Math.Abs(enemy.X - seedEnemy.X) + Math.Abs(enemy.Y - seedEnemy.Y);
+            if (distance > GoblinPackJoinDistanceTiles)
+            {
+                continue;
+            }
+
+            if (!HasLineOfSight(seedEnemy.X, seedEnemy.Y, enemy.X, enemy.Y))
+            {
+                continue;
+            }
+
+            _encounterEnemies.Add(enemy);
+            if (_encounterEnemies.Count >= GoblinPackMaxEncounterSize)
+            {
+                break;
+            }
+        }
+
+        _packEnemiesRemainingAfterCurrent = Math.Max(0, _encounterEnemies.Count - 1);
+        RebuildEncounterTurnOrder();
+    }
+
+    private int TryJoinEncounterReinforcements()
+    {
+        if (!_encounterActive || _player == null || _gameState == GameState.DeathScreen)
+        {
+            return 0;
+        }
+
+        if (!EncounterReinforcementRules.HasOpenEncounterSlot(_encounterEnemies.Count, GoblinPackMaxEncounterSize))
+        {
+            return 0;
+        }
+
+        var aliveEncounterMembers = _encounterEnemies
+            .Where(enemy => enemy.IsAlive)
+            .Select(enemy => new EncounterReinforcementMember(
+                X: enemy.X,
+                Y: enemy.Y,
+                EnemyKey: ResolveEnemyTypeKey(enemy.Type)))
+            .ToList();
+        if (aliveEncounterMembers.Count == 0)
+        {
+            return 0;
+        }
+
+        var joiners = new List<Enemy>();
+        foreach (var candidate in _enemies)
+        {
+            if (!candidate.IsAlive)
+            {
+                continue;
+            }
+
+            if (_encounterEnemies.Any(existing => ReferenceEquals(existing, candidate)))
+            {
+                continue;
+            }
+
+            if (joiners.Any(existing => ReferenceEquals(existing, candidate)))
+            {
+                continue;
+            }
+
+            var candidateMember = new EncounterReinforcementMember(
+                X: candidate.X,
+                Y: candidate.Y,
+                EnemyKey: ResolveEnemyTypeKey(candidate.Type));
+            if (!EncounterReinforcementRules.IsCandidateEligible(
+                    candidateMember,
+                    aliveEncounterMembers,
+                    EncounterReinforcementJoinDistanceTiles,
+                    AreEncounterAllies,
+                    HasLineOfSight))
+            {
+                continue;
+            }
+
+            joiners.Add(candidate);
+            if (!EncounterReinforcementRules.HasOpenEncounterSlot(
+                    _encounterEnemies.Count + joiners.Count,
+                    GoblinPackMaxEncounterSize))
+            {
+                break;
+            }
+        }
+
+        if (joiners.Count == 0)
+        {
+            return 0;
+        }
+
+        var preservedCombatantId = _encounterCurrentCombatantId;
+        var mergedSlots = _encounterTurnOrder.ToList();
+        var nextStableOrder = mergedSlots.Count > 0
+            ? mergedSlots.Max(slot => slot.StableOrder) + 1
+            : 1;
+
+        foreach (var joiner in joiners)
+        {
+            _encounterEnemies.Add(joiner);
+            if (!_enemyLootKits.ContainsKey(joiner))
+            {
+                _enemyLootKits[joiner] = CreateEnemyLootKit(joiner);
+            }
+
+            var initiativeMod = Math.Max(0, joiner.Type.Attack / 4);
+            var rollSeed = HashCode.Combine(
+                joiner.SpawnX,
+                joiner.SpawnY,
+                _encounterRound,
+                nextStableOrder,
+                _phase3EnemiesDefeated);
+            var roll = new Random(rollSeed).Next(1, 21);
+            var score = roll + initiativeMod;
+            mergedSlots.Add(new EncounterInitiativeSlot(
+                Id: BuildEncounterEnemyCombatantId(joiner),
+                Kind: EncounterCombatantKind.Enemy,
+                Roll: roll,
+                InitiativeScore: score,
+                StableOrder: nextStableOrder));
+            nextStableOrder += 1;
+
+            PushCombatLog($"{joiner.Type.Name} joins the encounter!");
+        }
+
+        if (_encounterTurnOrder.Count == 0)
+        {
+            RebuildEncounterTurnOrder(preferredCombatantId: preservedCombatantId);
+        }
+        else
+        {
+            _encounterTurnOrder.Clear();
+            _encounterTurnOrder.AddRange(EncounterInitiative.SortSlots(mergedSlots));
+            if (!string.IsNullOrWhiteSpace(preservedCombatantId))
+            {
+                var preservedIndex = _encounterTurnOrder.FindIndex(slot =>
+                    string.Equals(slot.Id, preservedCombatantId, StringComparison.Ordinal));
+                if (preservedIndex >= 0)
+                {
+                    _encounterTurnIndex = preservedIndex;
+                }
+            }
+
+            SyncEncounterCurrentCombatantId();
+        }
+
+        _packEnemiesRemainingAfterCurrent = Math.Max(0, _encounterEnemies.Count(enemy =>
+            enemy.IsAlive &&
+            !ReferenceEquals(enemy, _currentEnemy)));
+        SyncEncounterTargetSelection(preferCurrentEnemy: true);
+        return joiners.Count;
+    }
+
+    private void RebuildEncounterEnemiesFromCurrent(Enemy currentEnemy)
+    {
+        _encounterEnemies.RemoveAll(enemy => !enemy.IsAlive);
+        if (_encounterEnemies.Count > 0)
+        {
+            PruneEncounterTurnOrder();
+            return;
+        }
+
+        BeginEncounterFromSeed(currentEnemy);
+    }
+
+    private bool TryPromoteNextGoblinPackEnemy(Enemy defeatedEnemy)
+    {
+        if (!_encounterActive || _player == null || !_player.IsAlive || _gameState != GameState.Combat)
+        {
+            return false;
+        }
+
+        _encounterEnemies.RemoveAll(enemy => !enemy.IsAlive || ReferenceEquals(enemy, defeatedEnemy));
+        TryJoinEncounterReinforcements();
+        PruneEncounterTurnOrder();
+        if (_encounterTurnOrder.Count == 0)
+        {
+            RebuildEncounterTurnOrder(preferredCombatantId: "player");
+            SetEncounterTurnToPlayer();
+        }
+
+        var aliveEnemies = GetAliveEncounterEnemies();
+        if (aliveEnemies.Count == 0)
+        {
+            ResetEncounterContext();
+            return false;
+        }
+
+        if (_currentEnemy == null || !_currentEnemy.IsAlive || ReferenceEquals(_currentEnemy, defeatedEnemy))
+        {
+            _currentEnemy = aliveEnemies[0];
+        }
+
+        if (!_enemyLootKits.ContainsKey(_currentEnemy))
+        {
+            _enemyLootKits[_currentEnemy] = CreateEnemyLootKit(_currentEnemy);
+        }
+
+        _enemyPoisoned = 0;
+        _packEnemiesRemainingAfterCurrent = Math.Max(0, aliveEnemies.Count(enemy =>
+            !ReferenceEquals(enemy, _currentEnemy)));
+        SyncEncounterTargetSelection(preferCurrentEnemy: true);
+        DoEnemyAttack();
+        return true;
     }
 
     private static bool TryBuildEnemyLootKitFromSnapshot(EnemySnapshot snapshot, out EnemyLootKit kit)
@@ -8481,6 +9756,28 @@ public sealed class Game : IDisposable
         }
     }
 
+    private void DrawCombatReachableTiles()
+    {
+        if (_player == null || !_combatMoveModeActive || _combatMovePointsRemaining <= 0)
+        {
+            return;
+        }
+
+        if (!IsCombatState(_gameState))
+        {
+            return;
+        }
+
+        var reachable = BuildPlayerReachableCombatTiles();
+        foreach (var tile in reachable)
+        {
+            var px = tile.X * GameMap.TileSize;
+            var py = tile.Y * GameMap.TileSize;
+            Raylib.DrawRectangle(px + 4, py + 4, GameMap.TileSize - 8, GameMap.TileSize - 8, new Color(82, 154, 204, 64));
+            Raylib.DrawRectangleLines(px + 3, py + 3, GameMap.TileSize - 6, GameMap.TileSize - 6, new Color(126, 198, 255, 170));
+        }
+    }
+
     private void DrawPhase3SealedCorridorLocks()
     {
         if (_phase3RouteChoice == Phase3RouteChoice.None)
@@ -8761,6 +10058,7 @@ public sealed class Game : IDisposable
         DrawPhase3SealedCorridorLocks();
         DrawRewardNodes();
         DrawGroundLoot();
+        DrawCombatReachableTiles();
 
         foreach (var enemy in _enemies.Where(e => e.IsAlive))
         {
@@ -8866,6 +10164,11 @@ public sealed class Game : IDisposable
         return enemy.Type.Name switch
         {
             "Goblin" => "goblin",
+            "Goblin Grunt" => "goblin",
+            "Goblin Skirmisher" => "goblin",
+            "Goblin Slinger" => "goblin",
+            "Goblin Supervisor" => "goblin",
+            "Goblin General" => "goblin",
             "Warg" => "wogol",
             "Skeleton" => "skelet",
             "Cultist" => "masked_orc",
@@ -9012,10 +10315,22 @@ public sealed class Game : IDisposable
             UiLayout.CombatHeaderHeight,
             ColPanelAlt,
             ColBorder);
-        DrawCenteredText(_currentEnemy.Type.Name, w / 2, 74, 30, ColAccentRose);
+        var aliveTargets = GetAliveEncounterEnemies();
+        var activeTargetIndex = aliveTargets.FindIndex(enemy => ReferenceEquals(enemy, _currentEnemy));
+        if (activeTargetIndex < 0)
+        {
+            activeTargetIndex = 0;
+        }
+
+        var meleeValidation = ValidateCurrentEnemyTargetForMelee();
         var enemyHp = Math.Max(0, _currentEnemy.CurrentHp);
-        DrawCenteredText($"Enemy HP {enemyHp}/{_currentEnemy.Type.MaxHp}", w / 2, 102, 18, ColWhite);
-        DrawCenteredText($"Build: {GetRunIdentityLabel()}", w / 2, 120, 14, ColSkyBlue);
+        var attackReadinessLabel = meleeValidation.IsLegal
+            ? "Melee ready"
+            : $"Melee blocked ({meleeValidation.BuildBlockedReason()})";
+        var losLabel = meleeValidation.HasLineOfSight ? "LOS clear" : "LOS blocked";
+        DrawCenteredText($"{_currentEnemy.Type.Name}  Target {activeTargetIndex + 1}/{Math.Max(1, aliveTargets.Count)}", w / 2, 74, 28, ColAccentRose);
+        DrawCenteredText($"Enemy HP {enemyHp}/{_currentEnemy.Type.MaxHp}  Dist {meleeValidation.DistanceTiles}/{meleeValidation.MaxRangeTiles}", w / 2, 100, 17, ColWhite);
+        DrawCenteredText($"{attackReadinessLabel}  |  {losLabel}", w / 2, 118, 14, meleeValidation.IsLegal ? ColGreen : ColYellow);
 
         // Shared content area for log + action panels.
         var contentX = UiLayout.CombatHeaderInsetX;
@@ -9060,20 +10375,28 @@ public sealed class Game : IDisposable
         var armorStyleFlee = GetArmorStateFleeBonus(_player);
         var totalDefense = _player.DefenseBonus + GetClassDefenseBonus(_player) + _runDefenseBonus + armorStyleDefense + GetConditionDefenseModifier();
         var fleeChance = Math.Clamp(50 + _player.FleeBonus + GetClassFleeBonus(_player) + _runFleeBonus + armorStyleFlee + GetConditionFleeModifier(), 5, 95);
-        Raylib.DrawText($"HP {_player.CurrentHp}/{_player.MaxHp}", actionX + 10, actionY + actionH - 82, 13, ColGreen);
-        Raylib.DrawText($"MP {_player.CurrentMana}/{_player.MaxMana}", actionX + 10, actionY + actionH - 66, 13, ColSkyBlue);
-        Raylib.DrawText($"DEF {totalDefense}  Flee {fleeChance}%", actionX + 10, actionY + actionH - 50, 13, ColLightGray);
+        Raylib.DrawText($"HP {_player.CurrentHp}/{_player.MaxHp}", actionX + 10, actionY + actionH - 96, 13, ColGreen);
+        Raylib.DrawText($"MP {_player.CurrentMana}/{_player.MaxMana}", actionX + 10, actionY + actionH - 80, 13, ColSkyBlue);
+        Raylib.DrawText($"Move {_combatMovePointsRemaining}/{_combatMovePointsMax}", actionX + 10, actionY + actionH - 64, 13, ColYellow);
+        Raylib.DrawText($"DEF {totalDefense}  Flee {fleeChance}%", actionX + 10, actionY + actionH - 48, 13, ColLightGray);
         var condSummary = GetActiveMajorConditionSummary();
-        Raylib.DrawText($"Cond: {condSummary}", actionX + 10, actionY + actionH - 34, 12, _settingsOptionalConditionsEnabled ? ColAccentRose : ColGray);
-        Raylib.DrawText(_player.CharacterClass.Name, actionX + 10, actionY + actionH - 22, 13, ColWhite);
-        Raylib.DrawText(GetClassCombatTag(_player.CharacterClass.Name), actionX + 10, actionY + actionH - 8, 12, ColSkyBlue);
+        Raylib.DrawText($"Cond: {condSummary}", actionX + 10, actionY + actionH - 32, 12, _settingsOptionalConditionsEnabled ? ColAccentRose : ColGray);
+        Raylib.DrawText(_player.CharacterClass.Name, actionX + 10, actionY + actionH - 20, 13, ColWhite);
+        Raylib.DrawText(GetClassCombatTag(_player.CharacterClass.Name), actionX + 10, actionY + actionH - 6, 12, ColSkyBlue);
 
         DrawFooterBar(
             UiLayout.CombatFooterInset,
             h - UiLayout.CombatFooterInset,
             w - UiLayout.CombatFooterInset * 2,
             24);
-        DrawCenteredText($"UP/DOWN select  |  ENTER act  |  Arc {_milestoneArcChargesThisCombat}  Escape {_milestoneEscapeChargesThisCombat}", w / 2, h - 58, 15, ColLightGray);
+        if (_combatMoveModeActive)
+        {
+            DrawCenteredText($"Move Mode: ARROWS/WASD step  |  ENTER/ESC end move  |  Remaining {_combatMovePointsRemaining}", w / 2, h - 58, 15, ColLightGray);
+        }
+        else
+        {
+            DrawCenteredText($"UP/DOWN action  |  LEFT/RIGHT target  |  ENTER act  |  Arc {_milestoneArcChargesThisCombat}  Escape {_milestoneEscapeChargesThisCombat}", w / 2, h - 58, 15, ColLightGray);
+        }
     }
 
     private void DrawCombatSkillMenu()
@@ -9173,9 +10496,68 @@ public sealed class Game : IDisposable
         }
 
         var selectedSpell = spells[Math.Min(_selectedSpellIndex, spells.Count - 1)];
+        var spellValidation = ValidateCurrentEnemyTargetForSpell(selectedSpell);
+        var spellLosLabel = spellValidation.HasLineOfSight ? "LOS clear" : "LOS blocked";
+        var spellTargetColor = spellValidation.IsLegal ? ColGreen : ColYellow;
+        DrawCenteredText(
+            $"Target {_currentEnemy?.Type.Name ?? "None"}  Dist {spellValidation.DistanceTiles}/{spellValidation.MaxRangeTiles}  {spellLosLabel}",
+            w / 2,
+            panelY + panelH - 62,
+            14,
+            spellTargetColor);
         DrawCenteredText(selectedSpell.Description, w / 2, panelY + panelH - 44, 17, ColLightGray);
         DrawFooterBar(panelX + 10, panelY + panelH - 22, panelW - 20, 16);
-        DrawCenteredText("ENTER cast  |  ESC back", w / 2, panelY + panelH - 21, 13, ColLightGray);
+        DrawCenteredText("ENTER target  |  ESC back", w / 2, panelY + panelH - 21, 13, ColLightGray);
+    }
+
+    private void DrawCombatSpellTargeting()
+    {
+        if (_player == null) return;
+        if (!TryGetPendingCombatSpell(out var pendingSpell))
+        {
+            DrawCombatSpellMenu();
+            return;
+        }
+
+        var w = Raylib.GetScreenWidth();
+        var panelW = w - 120;
+        var panelX = 60;
+        var panelY = 108;
+        var panelH = 230;
+        var tierLabel = pendingSpell.IsCantrip ? "Cantrip" : $"L{pendingSpell.SpellLevel}";
+        var validation = ValidateCurrentEnemyTargetForSpell(pendingSpell);
+        var targetName = _currentEnemy?.Type.Name ?? "None";
+        var losLabel = validation.HasLineOfSight ? "LOS clear" : "LOS blocked";
+        var aliveLabel = validation.TargetAlive ? "Alive" : "Down";
+        var legalityLabel = validation.IsLegal
+            ? "Cast is legal."
+            : $"Blocked: {validation.BuildBlockedReason()}";
+        var aliveTargets = GetAliveEncounterEnemies();
+        var activeTargetIndex = aliveTargets.FindIndex(enemy => ReferenceEquals(enemy, _currentEnemy));
+        if (activeTargetIndex < 0)
+        {
+            activeTargetIndex = 0;
+        }
+
+        DrawPanel(panelX, panelY, panelW, panelH, ColPanelAlt, ColBorder);
+        DrawCenteredText("Spell Targeting", w / 2, panelY + 10, 30, ColSkyBlue);
+        DrawCenteredText($"{pendingSpell.Name} ({tierLabel})", w / 2, panelY + 52, 23, ColYellow);
+        DrawCenteredText(
+            $"Target {targetName}  {activeTargetIndex + 1}/{Math.Max(1, aliveTargets.Count)}",
+            w / 2,
+            panelY + 86,
+            19,
+            ColWhite);
+        DrawCenteredText(
+            $"Range {validation.DistanceTiles}/{validation.MaxRangeTiles}  {losLabel}  {aliveLabel}",
+            w / 2,
+            panelY + 114,
+            16,
+            validation.IsLegal ? ColGreen : ColYellow);
+        DrawCenteredText(legalityLabel, w / 2, panelY + 141, 15, validation.IsLegal ? ColGreen : ColYellow);
+        DrawCenteredText(pendingSpell.Description, w / 2, panelY + panelH - 44, 17, ColLightGray);
+        DrawFooterBar(panelX + 10, panelY + panelH - 22, panelW - 20, 16);
+        DrawCenteredText("LEFT/RIGHT cycle target  |  ENTER confirm cast  |  ESC cancel", w / 2, panelY + panelH - 21, 13, ColLightGray);
     }
 
     private void DrawCombatItemMenu()

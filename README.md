@@ -22,7 +22,7 @@ Dungeon Escape is a single-player RPG prototype focused on:
   - Optional condition presets
 - One full floor currently playable, including:
   - Multiple map zones and reward nodes
-  - Enemy packs and a floor boss (`Dread Knight`)
+  - Goblin-family enemy packs and a floor boss (`Goblin General`)
   - Route choice and run modifiers
 - Enemy AI with patrol/chase/search/return states, plus vision range and line-of-sight behavior
 - Turn-based combat:
@@ -59,6 +59,26 @@ dotnet restore
 dotnet run
 ```
 
+## Build For Testers (No SDK Needed On Their PC)
+
+Preferred (double-click):
+
+- Run `build_release.bat`
+
+Command-line equivalent:
+
+```powershell
+cd "C:\game_making\repo version"
+powershell -ExecutionPolicy Bypass -File .\publish_release.ps1
+```
+
+Output:
+
+- Folder: `dist\DungeonEscape-win-x64`
+- Zip: `dist\DungeonEscape-win-x64.zip`
+
+Share the zip (or folder) with testers. They only need to run `DungeonEscapeRaylib.exe`.
+
 ## Controls
 
 - Move: `WASD` or Arrow Keys
@@ -89,3 +109,4 @@ Optional environment overrides:
 
 - Visual direction: `VISUAL_STYLE.md`
 - Art and presentation notes: `VISUAL_BIBLE.md`
+- Growth roadmap: `PLAYER_HUNTING.md`

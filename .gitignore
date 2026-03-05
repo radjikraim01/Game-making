@@ -19,3 +19,6 @@ obj/
 saves/
 logs/
 
+# Local packaged builds
+dist/
+

@@ -12,12 +12,13 @@ public static class GameStateRules
         return state == GameState.Combat ||
                state == GameState.CombatSkillMenu ||
                state == GameState.CombatSpellMenu ||
+               state == GameState.CombatSpellTargeting ||
                state == GameState.CombatItemMenu;
     }
 
     public static GameState ResolveResumeState(GameState pausedFromState, bool hasActiveEnemy)
     {
-        if (pausedFromState == GameState.Combat && hasActiveEnemy)
+        if (IsCombatState(pausedFromState) && hasActiveEnemy)
         {
             return GameState.Combat;
         }

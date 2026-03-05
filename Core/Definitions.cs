@@ -13,6 +13,7 @@ public enum GameState
     Combat,
     CombatSkillMenu,
     CombatSpellMenu,
+    CombatSpellTargeting,
     CombatItemMenu,
     CharacterMenu,
     LevelUp,
@@ -1142,6 +1143,51 @@ public static class EnemyTypes
             Defense = 1,
             XpReward = 35,
             Color = new Raylib_cs.Color(78, 150, 78, 255)
+        },
+        ["goblin_grunt"] = new EnemyType
+        {
+            Name = "Goblin Grunt",
+            MaxHp = 16,
+            Attack = 5,
+            Defense = 1,
+            XpReward = 34,
+            Color = new Raylib_cs.Color(78, 150, 78, 255)
+        },
+        ["goblin_skirmisher"] = new EnemyType
+        {
+            Name = "Goblin Skirmisher",
+            MaxHp = 18,
+            Attack = 6,
+            Defense = 1,
+            XpReward = 44,
+            Color = new Raylib_cs.Color(92, 164, 102, 255)
+        },
+        ["goblin_slinger"] = new EnemyType
+        {
+            Name = "Goblin Slinger",
+            MaxHp = 14,
+            Attack = 7,
+            Defense = 1,
+            XpReward = 48,
+            Color = new Raylib_cs.Color(104, 168, 118, 255)
+        },
+        ["goblin_supervisor"] = new EnemyType
+        {
+            Name = "Goblin Supervisor",
+            MaxHp = 30,
+            Attack = 9,
+            Defense = 2,
+            XpReward = 96,
+            Color = new Raylib_cs.Color(130, 180, 92, 255)
+        },
+        ["goblin_general"] = new EnemyType
+        {
+            Name = "Goblin General",
+            MaxHp = 84,
+            Attack = 16,
+            Defense = 4,
+            XpReward = 410,
+            Color = new Raylib_cs.Color(190, 92, 70, 255)
         },
         ["warg"] = new EnemyType
         {

@@ -68,6 +68,7 @@ public static class Phase7SelfChecks
 
             AssertTrue(GameStateRules.IsCombatState(GameState.Combat), "Combat should be combat-state.");
             AssertTrue(GameStateRules.IsCombatState(GameState.CombatSpellMenu), "CombatSpellMenu should be combat-state.");
+            AssertTrue(GameStateRules.IsCombatState(GameState.CombatSpellTargeting), "CombatSpellTargeting should be combat-state.");
             AssertTrue(GameStateRules.IsCombatState(GameState.CombatItemMenu), "CombatItemMenu should be combat-state.");
             AssertFalse(GameStateRules.IsCombatState(GameState.PauseMenu), "PauseMenu should not be combat-state.");
         });
@@ -77,6 +78,452 @@ public static class Phase7SelfChecks
             AssertEqual(GameState.Combat, GameStateRules.ResolveResumeState(GameState.Combat, hasActiveEnemy: true), "Pause resume should return to combat with active enemy.");
             AssertEqual(GameState.Playing, GameStateRules.ResolveResumeState(GameState.Combat, hasActiveEnemy: false), "Pause resume should fallback to playing without enemy.");
             AssertEqual(GameState.Playing, GameStateRules.ResolveResumeState(GameState.Playing, hasActiveEnemy: true), "Pause resume should return to playing when paused from playing.");
+        });
+
+        Run("EncounterInitiative_DeterministicOrdering_AndTies", () =>
+        {
+            var participants = new List<EncounterInitiativeParticipant>
+            {
+                new("player", EncounterCombatantKind.Player, InitiativeModifier: 2, StableOrder: 0),
+                new("enemy_alpha", EncounterCombatantKind.Enemy, InitiativeModifier: 1, StableOrder: 1),
+                new("enemy_bravo", EncounterCombatantKind.Enemy, InitiativeModifier: 1, StableOrder: 2)
+            };
+
+            var first = EncounterInitiative.BuildOrder(participants, seed: 7312);
+            var second = EncounterInitiative.BuildOrder(participants, seed: 7312);
+            AssertEqual(first.Count, second.Count, "Initiative order count should be deterministic with same seed.");
+            for (var i = 0; i < first.Count; i++)
+            {
+                AssertEqual(first[i].Id, second[i].Id, $"Initiative id mismatch at index {i}.");
+                AssertEqual(first[i].Roll, second[i].Roll, $"Initiative roll mismatch at index {i}.");
+                AssertEqual(first[i].InitiativeScore, second[i].InitiativeScore, $"Initiative score mismatch at index {i}.");
+            }
+
+            var tieSlots = new List<EncounterInitiativeSlot>
+            {
+                new("enemy_c", EncounterCombatantKind.Enemy, Roll: 11, InitiativeScore: 15, StableOrder: 2),
+                new("enemy_b", EncounterCombatantKind.Enemy, Roll: 10, InitiativeScore: 15, StableOrder: 1),
+                new("enemy_a", EncounterCombatantKind.Enemy, Roll: 14, InitiativeScore: 18, StableOrder: 3),
+                new("enemy_d", EncounterCombatantKind.Enemy, Roll: 9, InitiativeScore: 15, StableOrder: 1)
+            };
+
+            var orderedTies = EncounterInitiative.SortSlots(tieSlots);
+            var orderedIds = orderedTies.Select(slot => slot.Id).ToArray();
+            AssertEqual("enemy_a", orderedIds[0], "Highest initiative score should sort first.");
+            AssertEqual("enemy_b", orderedIds[1], "StableOrder tie-break should sort lower StableOrder first.");
+            AssertEqual("enemy_d", orderedIds[2], "Id should break ties after StableOrder.");
+            AssertEqual("enemy_c", orderedIds[3], "Remaining tied entry order mismatch.");
+        });
+
+        Run("EncounterInitiative_AdvanceTurn_WrapAndEdgeCases", () =>
+        {
+            AssertEqual(0, EncounterInitiative.AdvanceTurnIndex(0, 0), "Zero participant advance should return 0.");
+            AssertEqual(0, EncounterInitiative.AdvanceTurnIndex(-1, 3), "Negative current turn should normalize to 0.");
+            AssertEqual(1, EncounterInitiative.AdvanceTurnIndex(0, 3), "Turn 0 should advance to 1.");
+            AssertEqual(2, EncounterInitiative.AdvanceTurnIndex(1, 3), "Turn 1 should advance to 2.");
+            AssertEqual(0, EncounterInitiative.AdvanceTurnIndex(2, 3), "Last turn should wrap to 0.");
+            AssertEqual(0, EncounterInitiative.AdvanceTurnIndex(99, 3), "Out-of-range current turn should normalize to 0.");
+        });
+
+        Run("EncounterMovement_RaceArmorBudgets", () =>
+        {
+            AssertEqual(5, EncounterMovementRules.GetEffectiveMoveBudget(Race.Dwarf, ArmorCategory.Unarmored),
+                "Dwarf unarmored move budget mismatch.");
+            AssertEqual(6, EncounterMovementRules.GetEffectiveMoveBudget(Race.Human, ArmorCategory.Unarmored),
+                "Human unarmored move budget mismatch.");
+            AssertEqual(7, EncounterMovementRules.GetEffectiveMoveBudget(Race.Elf, ArmorCategory.Unarmored),
+                "Elf unarmored move budget mismatch.");
+            AssertEqual(4, EncounterMovementRules.GetEffectiveMoveBudget(Race.Dwarf, ArmorCategory.Heavy),
+                "Dwarf heavy armor movement floor mismatch.");
+            AssertEqual(5, EncounterMovementRules.GetEffectiveMoveBudget(Race.Human, ArmorCategory.Heavy),
+                "Human heavy armor movement penalty mismatch.");
+            AssertEqual(6, EncounterMovementRules.GetEffectiveMoveBudget(Race.Elf, ArmorCategory.Heavy),
+                "Elf heavy armor movement penalty mismatch.");
+        });
+
+        Run("EncounterMovement_ReachableTiles_RespectBudgetAndBlockers", () =>
+        {
+            var blocked = new HashSet<(int X, int Y)> { (1, 0) };
+            bool CanEnter(int x, int y)
+            {
+                if (x < -1 || x > 3 || y < -1 || y > 3)
+                {
+                    return false;
+                }
+
+                return !blocked.Contains((x, y));
+            }
+
+            var reachable = EncounterMovementRules.BuildReachableTiles(0, 0, 2, CanEnter);
+            var set = reachable.ToHashSet();
+            AssertTrue(set.Contains((0, 1)), "Adjacent open tile should be reachable.");
+            AssertTrue(set.Contains((0, 2)), "Two-step straight tile should be reachable.");
+            AssertTrue(set.Contains((1, 1)), "Tile reachable around blocker should be included.");
+            AssertFalse(set.Contains((1, 0)), "Blocked tile must not be reachable.");
+            AssertFalse(set.Contains((2, 2)), "Out-of-budget tile must not be reachable.");
+
+            var none = EncounterMovementRules.BuildReachableTiles(0, 0, 0, CanEnter);
+            AssertEqual(0, none.Count, "Zero movement budget should yield no reachable tiles.");
+        });
+
+        Run("EncounterTargeting_Validation_RangeAndLos", () =>
+        {
+            bool HasLos(int fromX, int fromY, int toX, int toY)
+            {
+                // Simulate one blocked lane from (0,0) to (2,0).
+                return !(fromX == 0 && fromY == 0 && toX == 2 && toY == 0);
+            }
+
+            var meleeOutOfRange = EncounterTargetingRules.Validate(
+                fromX: 0,
+                fromY: 0,
+                toX: 2,
+                toY: 0,
+                targetAlive: true,
+                maxRangeTiles: 1,
+                requiresLineOfSight: true,
+                hasLineOfSight: HasLos);
+            AssertFalse(meleeOutOfRange.IsLegal, "Out-of-range target should not be legal.");
+            AssertFalse(meleeOutOfRange.InRange, "Out-of-range target should report InRange=false.");
+
+            var losBlocked = EncounterTargetingRules.Validate(
+                fromX: 0,
+                fromY: 0,
+                toX: 2,
+                toY: 0,
+                targetAlive: true,
+                maxRangeTiles: 3,
+                requiresLineOfSight: true,
+                hasLineOfSight: HasLos);
+            AssertFalse(losBlocked.IsLegal, "LOS-blocked target should not be legal.");
+            AssertTrue(losBlocked.InRange, "LOS test target should be in range.");
+            AssertFalse(losBlocked.HasLineOfSight, "LOS-blocked target should report HasLineOfSight=false.");
+
+            var legal = EncounterTargetingRules.Validate(
+                fromX: 0,
+                fromY: 0,
+                toX: 1,
+                toY: 0,
+                targetAlive: true,
+                maxRangeTiles: 1,
+                requiresLineOfSight: true,
+                hasLineOfSight: HasLos);
+            AssertTrue(legal.IsLegal, "Adjacent clear target should be legal.");
+            AssertEqual(1, legal.DistanceTiles, "Distance computation mismatch.");
+        });
+
+        Run("EncounterTargeting_Validation_DeadTargetBlocked", () =>
+        {
+            var deadTarget = EncounterTargetingRules.Validate(
+                fromX: 0,
+                fromY: 0,
+                toX: 0,
+                toY: 1,
+                targetAlive: false,
+                maxRangeTiles: 2,
+                requiresLineOfSight: false,
+                hasLineOfSight: (_, _, _, _) => true);
+            AssertFalse(deadTarget.IsLegal, "Dead target should never be legal.");
+            AssertEqual("Target is not alive.", deadTarget.BuildBlockedReason(), "Dead-target block reason mismatch.");
+        });
+
+        Run("EncounterEnemyTactics_MoveTowardTarget_LegalStepOrBlockedNoStep", () =>
+        {
+            bool CanEnterOpenLane(int x, int y)
+            {
+                return x >= -1 && x <= 4 && y >= -1 && y <= 1;
+            }
+
+            var move = EncounterEnemyTactics.DecideMoveTowardTarget(
+                startX: 0,
+                startY: 0,
+                targetX: 3,
+                targetY: 0,
+                maxMoveTiles: 2,
+                canEnterTile: CanEnterOpenLane);
+            AssertTrue(move.ShouldMove, "Enemy should advance when an open legal path exists.");
+            AssertEqual(2, move.Steps.Count, "Enemy should spend available movement when it moves toward target.");
+            AssertEqual((1, 0), move.Steps[0], "First tactical step should advance toward target.");
+            AssertEqual((2, 0), move.Destination, "Tactical destination mismatch for open-lane move.");
+            AssertTrue(move.Steps.All(step => CanEnterOpenLane(step.X, step.Y)),
+                "All tactical steps must remain on legal enterable tiles.");
+
+            var blocked = new HashSet<(int X, int Y)>
+            {
+                (1, 0),
+                (-1, 0),
+                (0, 1),
+                (0, -1)
+            };
+
+            bool CanEnterBlockedPocket(int x, int y)
+            {
+                if (x < -1 || x > 1 || y < -1 || y > 1)
+                {
+                    return false;
+                }
+
+                return !blocked.Contains((x, y));
+            }
+
+            var noStep = EncounterEnemyTactics.DecideMoveTowardTarget(
+                startX: 0,
+                startY: 0,
+                targetX: 2,
+                targetY: 0,
+                maxMoveTiles: 1,
+                canEnterTile: CanEnterBlockedPocket);
+            AssertFalse(noStep.ShouldMove, "Enemy should hold position when all adjacent legal steps are blocked.");
+            AssertEqual(0, noStep.Steps.Count, "Blocked tactical move should not produce steps.");
+            AssertEqual((0, 0), noStep.Destination, "Blocked tactical move should keep origin destination.");
+        });
+
+        Run("EncounterEnemyTactics_AttackFeasibility_GatedByRangeLosAndAlive", () =>
+        {
+            bool HasLos(int fromX, int fromY, int toX, int toY)
+            {
+                return !(fromX == 0 && fromY == 0 && toX == 2 && toY == 0);
+            }
+
+            var outOfRange = EncounterEnemyTactics.EvaluateAttackFeasibility(
+                attackerX: 0,
+                attackerY: 0,
+                targetX: 3,
+                targetY: 0,
+                targetAlive: true,
+                maxRangeTiles: 1,
+                requiresLineOfSight: false,
+                hasLineOfSight: HasLos);
+            AssertFalse(outOfRange.CanAttack, "Out-of-range target should block tactical enemy attack.");
+            AssertFalse(outOfRange.Validation.InRange, "Out-of-range attack should report InRange=false.");
+
+            var losBlocked = EncounterEnemyTactics.EvaluateAttackFeasibility(
+                attackerX: 0,
+                attackerY: 0,
+                targetX: 2,
+                targetY: 0,
+                targetAlive: true,
+                maxRangeTiles: 3,
+                requiresLineOfSight: true,
+                hasLineOfSight: HasLos);
+            AssertFalse(losBlocked.CanAttack, "LOS-blocked target should block tactical enemy attack.");
+            AssertTrue(losBlocked.Validation.InRange, "LOS-blocked target should remain in range.");
+            AssertFalse(losBlocked.Validation.HasLineOfSight, "LOS-blocked target should report blocked LOS.");
+
+            var deadTarget = EncounterEnemyTactics.EvaluateAttackFeasibility(
+                attackerX: 0,
+                attackerY: 0,
+                targetX: 1,
+                targetY: 0,
+                targetAlive: false,
+                maxRangeTiles: 1,
+                requiresLineOfSight: true,
+                hasLineOfSight: HasLos);
+            AssertFalse(deadTarget.CanAttack, "Dead target should block tactical enemy attack.");
+            AssertFalse(deadTarget.Validation.TargetAlive, "Dead target should report TargetAlive=false.");
+
+            var legalAttack = EncounterEnemyTactics.EvaluateAttackFeasibility(
+                attackerX: 0,
+                attackerY: 0,
+                targetX: 1,
+                targetY: 0,
+                targetAlive: true,
+                maxRangeTiles: 1,
+                requiresLineOfSight: true,
+                hasLineOfSight: HasLos);
+            AssertTrue(legalAttack.CanAttack, "In-range clear alive target should be attackable.");
+            AssertTrue(legalAttack.Validation.IsLegal, "Legal tactical attack should preserve target validation state.");
+        });
+
+        Run("EncounterReinforcements_Join_WhenAllyInRangeWithLos", () =>
+        {
+            var anchors = new List<EncounterReinforcementMember>
+            {
+                new(X: 6, Y: 6, EnemyKey: "goblin_grunt")
+            };
+            var candidate = new EncounterReinforcementMember(
+                X: 8,
+                Y: 6,
+                EnemyKey: "goblin_slinger");
+
+            var isEligible = EncounterReinforcementRules.IsCandidateEligible(
+                candidate,
+                anchors,
+                joinDistanceTiles: 2,
+                AreEncounterAllies,
+                hasLineOfSight: (_, _, _, _) => true);
+            AssertTrue(isEligible, "Goblin reinforcement should join when ally, in range, and LOS is clear.");
+        });
+
+        Run("EncounterReinforcements_Blocked_WhenNoAllyRangeLosOrCapFails", () =>
+        {
+            var anchors = new List<EncounterReinforcementMember>
+            {
+                new(X: 6, Y: 6, EnemyKey: "goblin_grunt")
+            };
+
+            var nonAllyCandidate = new EncounterReinforcementMember(X: 7, Y: 6, EnemyKey: "skeleton");
+            var nonAllyEligible = EncounterReinforcementRules.IsCandidateEligible(
+                nonAllyCandidate,
+                anchors,
+                joinDistanceTiles: 2,
+                AreEncounterAllies,
+                hasLineOfSight: (_, _, _, _) => true);
+            AssertFalse(nonAllyEligible, "Reinforcement should be blocked when candidate is not encounter ally.");
+
+            var outOfRangeCandidate = new EncounterReinforcementMember(X: 10, Y: 6, EnemyKey: "goblin_slinger");
+            var outOfRangeEligible = EncounterReinforcementRules.IsCandidateEligible(
+                outOfRangeCandidate,
+                anchors,
+                joinDistanceTiles: 2,
+                AreEncounterAllies,
+                hasLineOfSight: (_, _, _, _) => true);
+            AssertFalse(outOfRangeEligible, "Reinforcement should be blocked when candidate is out of range.");
+
+            var losBlockedCandidate = new EncounterReinforcementMember(X: 8, Y: 6, EnemyKey: "goblin_slinger");
+            var losBlockedEligible = EncounterReinforcementRules.IsCandidateEligible(
+                losBlockedCandidate,
+                anchors,
+                joinDistanceTiles: 2,
+                AreEncounterAllies,
+                hasLineOfSight: (_, _, _, _) => false);
+            AssertFalse(losBlockedEligible, "Reinforcement should be blocked when LOS is blocked.");
+
+            AssertFalse(
+                EncounterReinforcementRules.HasOpenEncounterSlot(encounterSize: 3, maxEncounterSize: 3),
+                "Cap-full encounter should reject additional reinforcement joins.");
+        });
+
+        Run("EncounterSpellTargeting_RangePolicy_BySpellLevel", () =>
+        {
+            AssertEqual(EncounterSpellTargetingRangePolicy.CantripRangeTiles,
+                EncounterSpellTargetingRangePolicy.ResolveSpellRangeTiles(0),
+                "Cantrip range policy mismatch.");
+            AssertEqual(EncounterSpellTargetingRangePolicy.Level1RangeTiles,
+                EncounterSpellTargetingRangePolicy.ResolveSpellRangeTiles(1),
+                "Level 1 range policy mismatch.");
+            AssertEqual(EncounterSpellTargetingRangePolicy.Level2RangeTiles,
+                EncounterSpellTargetingRangePolicy.ResolveSpellRangeTiles(2),
+                "Level 2 range policy mismatch.");
+            AssertEqual(EncounterSpellTargetingRangePolicy.Level3PlusRangeTiles,
+                EncounterSpellTargetingRangePolicy.ResolveSpellRangeTiles(3),
+                "Level 3+ range policy mismatch.");
+            AssertEqual(EncounterSpellTargetingRangePolicy.CantripRangeTiles,
+                EncounterSpellTargetingRangePolicy.ResolveSpellRangeTiles(-99),
+                "Negative spell level should normalize to cantrip range policy.");
+
+            var level2Spell = new SpellDefinition
+            {
+                Id = "selfcheck_l2_spell",
+                Name = "Selfcheck L2 Spell",
+                ClassName = "Mage",
+                SpellLevel = 2,
+                Description = "Self-check fixture spell.",
+                ScalingStat = StatName.Intelligence,
+                BaseDamage = 1,
+                Variance = 0,
+                ArmorBypass = 0,
+                DamageTag = "arcane",
+                SuppressCounterAttack = false
+            };
+            AssertEqual(EncounterSpellTargetingRangePolicy.Level2RangeTiles,
+                EncounterSpellTargetingRangePolicy.ResolveSpellRangeTiles(level2Spell),
+                "Spell-definition range resolution mismatch.");
+        });
+
+        Run("EncounterSpellTargeting_ModeAndCycling_ExplicitBehavior", () =>
+        {
+            AssertFalse(EncounterSpellTargetingRules.IsExplicitMode(EncounterSpellTargetMode.Disabled),
+                "Disabled mode should not be explicit.");
+            AssertTrue(EncounterSpellTargetingRules.IsExplicitMode(EncounterSpellTargetMode.SelectTarget),
+                "SelectTarget mode should be explicit.");
+            AssertTrue(EncounterSpellTargetingRules.IsExplicitMode(EncounterSpellTargetMode.ConfirmTarget),
+                "ConfirmTarget mode should be explicit.");
+
+            AssertEqual(EncounterSpellTargetMode.Disabled,
+                EncounterSpellTargetingRules.ResolveMode(spellMenuOpen: false, hasTargetCandidates: true, requiresConfirmation: false),
+                "Closed spell menu should force disabled spell target mode.");
+            AssertEqual(EncounterSpellTargetMode.Disabled,
+                EncounterSpellTargetingRules.ResolveMode(spellMenuOpen: true, hasTargetCandidates: false, requiresConfirmation: false),
+                "Missing target candidates should force disabled spell target mode.");
+            AssertEqual(EncounterSpellTargetMode.SelectTarget,
+                EncounterSpellTargetingRules.ResolveMode(spellMenuOpen: true, hasTargetCandidates: true, requiresConfirmation: false),
+                "Open spell menu should enter SelectTarget mode when confirmation is not required.");
+            AssertEqual(EncounterSpellTargetMode.ConfirmTarget,
+                EncounterSpellTargetingRules.ResolveMode(spellMenuOpen: true, hasTargetCandidates: true, requiresConfirmation: true),
+                "Open spell menu should enter ConfirmTarget mode when confirmation is required.");
+
+            AssertEqual(-1, EncounterSpellTargetingRules.CycleTargetIndex(currentIndex: 0, candidateCount: 0, direction: 1),
+                "Zero target candidates should not return a valid index.");
+            AssertEqual(1, EncounterSpellTargetingRules.CycleTargetIndex(currentIndex: 0, candidateCount: 3, direction: 1),
+                "Forward cycle mismatch.");
+            AssertEqual(2, EncounterSpellTargetingRules.CycleTargetIndex(currentIndex: 0, candidateCount: 3, direction: -1),
+                "Backward wrap cycle mismatch.");
+            AssertEqual(0, EncounterSpellTargetingRules.CycleTargetIndex(currentIndex: 2, candidateCount: 3, direction: 1),
+                "Forward wrap cycle mismatch.");
+            AssertEqual(2, EncounterSpellTargetingRules.CycleTargetIndex(currentIndex: 99, candidateCount: 3, direction: 0),
+                "Zero-direction cycle should normalize and keep the current index.");
+        });
+
+        Run("EncounterSpellTargeting_Validation_UsesRangePolicy", () =>
+        {
+            var level1Spell = new SpellDefinition
+            {
+                Id = "selfcheck_l1_spell",
+                Name = "Selfcheck L1 Spell",
+                ClassName = "Mage",
+                SpellLevel = 1,
+                Description = "Self-check fixture spell.",
+                ScalingStat = StatName.Intelligence,
+                BaseDamage = 1,
+                Variance = 0,
+                ArmorBypass = 0,
+                DamageTag = "arcane",
+                SuppressCounterAttack = false
+            };
+
+            bool HasLos(int fromX, int fromY, int toX, int toY)
+            {
+                return !(fromX == 0 && fromY == 0 && toX == 5 && toY == 0);
+            }
+
+            var outOfRange = EncounterSpellTargetingRules.ValidateSpellTarget(
+                spell: level1Spell,
+                fromX: 0,
+                fromY: 0,
+                toX: 7,
+                toY: 0,
+                targetAlive: true,
+                requiresLineOfSight: true,
+                hasLineOfSight: HasLos);
+            AssertFalse(outOfRange.IsLegal, "Out-of-range spell target should be blocked.");
+            AssertEqual(EncounterSpellTargetingRangePolicy.Level1RangeTiles, outOfRange.MaxRangeTiles,
+                "Spell validation should use level-based range policy.");
+
+            var losBlocked = EncounterSpellTargetingRules.ValidateSpellTarget(
+                spell: level1Spell,
+                fromX: 0,
+                fromY: 0,
+                toX: 5,
+                toY: 0,
+                targetAlive: true,
+                requiresLineOfSight: true,
+                hasLineOfSight: HasLos);
+            AssertFalse(losBlocked.IsLegal, "LOS-blocked spell target should be illegal.");
+            AssertTrue(losBlocked.InRange, "LOS-blocked target should remain in range.");
+            AssertFalse(losBlocked.HasLineOfSight, "LOS-blocked target should report blocked line of sight.");
+
+            var legal = EncounterSpellTargetingRules.ValidateSpellTarget(
+                spell: level1Spell,
+                fromX: 0,
+                fromY: 0,
+                toX: 4,
+                toY: 0,
+                targetAlive: true,
+                requiresLineOfSight: true,
+                hasLineOfSight: HasLos);
+            AssertTrue(legal.IsLegal, "In-range clear spell target should be legal.");
+            AssertEqual(4, legal.DistanceTiles, "Spell distance calculation mismatch.");
         });
 
         Run("FeatProgression_CreationAndEveryFourthLevel", () =>
@@ -293,6 +740,20 @@ public static class Phase7SelfChecks
         {
             throw new InvalidOperationException($"{message} Expected={expected} Actual={actual}");
         }
+    }
+
+    private static bool AreEncounterAllies(string? leftEnemyKey, string? rightEnemyKey)
+    {
+        var leftIsGoblin = !string.IsNullOrWhiteSpace(leftEnemyKey) &&
+                           leftEnemyKey.StartsWith("goblin", StringComparison.OrdinalIgnoreCase);
+        var rightIsGoblin = !string.IsNullOrWhiteSpace(rightEnemyKey) &&
+                            rightEnemyKey.StartsWith("goblin", StringComparison.OrdinalIgnoreCase);
+        if (leftIsGoblin && rightIsGoblin)
+        {
+            return true;
+        }
+
+        return string.Equals(leftEnemyKey, rightEnemyKey, StringComparison.Ordinal);
     }
 
     private static GameSaveSnapshot BuildSnapshot()

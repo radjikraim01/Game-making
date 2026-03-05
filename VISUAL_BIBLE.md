@@ -34,6 +34,11 @@ Primary Asset Pack: `0x72 DungeonTileset II (v1.7)`
 
 ### Enemy mapping
 - Goblin -> `goblin`
+- Goblin Grunt -> `goblin`
+- Goblin Skirmisher -> `goblin`
+- Goblin Slinger -> `goblin`
+- Goblin Supervisor -> `goblin`
+- Goblin General -> `goblin`
 - Warg -> `wogol`
 - Skeleton -> `skelet`
 - Cultist -> `masked_orc`

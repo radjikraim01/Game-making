@@ -1,6 +1,6 @@
 # Unified Work Plan (Single Source of Truth)
 
-Last updated: 2026-03-04
+Last updated: 2026-03-05
 
 ## Status
 
@@ -10,6 +10,9 @@ Last updated: 2026-03-04
 - Phase 4A: implementation complete (manual gameplay validation deferred)
 - Phase 4B: implementation complete (manual gameplay validation deferred)
 - Phase 5: implementation complete (manual gameplay validation deferred)
+- Phase 6: implementation complete (manual gameplay validation deferred)
+- Phase 7: implementation complete (manual gameplay validation deferred)
+- Phase 8: planned (city hub + story spine)
 
 ## Phase 1 - Tactical Combat Foundation
 
@@ -342,14 +345,186 @@ Progress notes (2026-03-05):
     - no level-gated feats in current scope,
     - valid prerequisite references.
 - Verification:
-  - `dotnet build -c Release` passed.
-  - `dotnet run -c Release -- --phase7-checks` passed (`15/15`).
+- `dotnet build -c Release` passed.
+- `dotnet run -c Release -- --phase7-checks` passed (`15/15`).
+
+## Phase 6 - Floor Identity and Modular Visual Equipment (Planned)
+
+Goal:
+- Improve dungeon realism and readability by separating enemy families across floor progression.
+- Add true equipment-visible character visuals (paper-doll layering) once modular art is available.
+
+Scope:
+- Floor-by-floor enemy placement plan:
+  - Avoid placing all enemy types on the same early floor.
+  - Assign enemy families by floor theme/tier and encounter role.
+  - Reserve boss/support enemy sets for deeper floors and escalation bands.
+- Encounter progression rules:
+  - Early floors: basic enemy families and clear telegraphed threats.
+  - Mid floors: mixed packs and synergy-based enemy behavior.
+  - Deep floors: elite variants and specialized counters.
+- Visual equipment system (asset-gated):
+  - Use layered body + gear rendering for equipped items (paper-doll style).
+  - Support at minimum: `Armor`, `Head`, `Cloak`, `MainHand`, `OffHand`.
+  - Keep fallback behavior when a specific overlay layer is missing.
+
+Checklist:
+- [ ] Define enemy-family-to-floor matrix (Floor 1+).
+- [x] Rework spawn tables so Floor 1 contains only entry-tier enemy families.
+- [ ] Add per-floor difficulty and composition targets (trash/skirmisher/bruiser/caster/elite ratios).
+- [x] Add boss lane ownership per floor so each boss is not front-loaded.
+- [ ] Define modular sprite naming contract for paper-doll layers and animation sets.
+- [ ] Integrate layered sprite draw pipeline for player equipment (behind/in-front ordering).
+- [ ] Add graceful fallback to base full-body sprite when layer assets are missing.
+
+Acceptance Criteria:
+- [ ] Floor 1 no longer uses the full enemy catalog.
+- [ ] Enemy identity feels floor-themed and progression-authentic.
+- [ ] Player can visually identify at least equipped armor/head/cloak in-world.
+- [ ] Missing modular sprites never break runtime rendering.
+
+Blocked-by:
+- Modular equipment art assets are required before full paper-doll implementation begins.
+
+Progress notes (2026-03-05):
+- Floor 1 encounter identity shifted to a goblin-family roster:
+  - `Goblin Grunt`
+  - `Goblin Skirmisher`
+  - `Goblin Slinger`
+  - `Goblin Supervisor`
+  - floor boss: `Goblin General`
+- Reworked all active Floor 1 spawn packs (entry/route/sanctum/reinforcements) to goblin-family keys only.
+- Added pack-chain combat behavior for goblin encounters:
+  - fights can chain into nearby goblin allies,
+  - encounter size is capped to a 1-3 hostile flow.
+- Updated Floor 1 loot profile to goblin-themed low-tier supplies and adjusted rarity logic by goblin tier (grunt/skirmisher/supervisor/general).
+- Updated boss objective/combat text and sanctum-wave boss detection to `Goblin General`.
+
+## Phase 7 - Tactical Dungeon Encounter Combat (Current Priority)
+
+Goal:
+- Shift combat from single-target duels to tactical dungeon encounters with movement, positioning, and legal targeting.
+
+Scope:
+- Keep combat on dungeon tiles (no detached combat scene).
+- Multi-unit encounters with initiative order.
+- Turn economy with movement caps and action limits.
+- Targeting rules with strict range + line-of-sight + wall blocking.
+- Reinforcement joins when nearby enemies detect ongoing combat.
+- Spell targeting mode with legal-target preview and confirmation.
+
+Locked design decisions:
+- Movement is capped per turn (no infinite movement).
+- Baseline race movement:
+  - `Dwarf`: 5 tiles
+  - `Human`: 6 tiles
+  - `Elf`: 7 tiles
+- Heavy armor movement penalty target: `-1 tile` (with minimum floor).
+- Walls/blocked tiles prevent targeting and movement.
+- Story expansion is deferred until combat system and floor progression stabilize.
+
+Implementation order:
+- Pass 1: encounter scaffolding (combat roster, encounter context, initial join logic).
+- Pass 2: initiative + turn ownership model.
+- Pass 3: movement points and reachable-tile movement.
+- Pass 4: unified target validation and enemy selection UX.
+- Pass 5: spell target mode with legality highlights (support layer complete).
+- Pass 6: reinforcement joins and tactical AI movement/attack decisions.
+- Pass 7: validation and gameplay tuning pass.
+
+Checklist:
+- [x] Capture tactical-combat design and constraints in this plan.
+- [x] Start encounter scaffolding implementation in runtime code.
+- [x] Add encounter initiative timeline and turn transitions.
+- [x] Add per-turn movement budget and race-based movement model.
+- [x] Add legal-target validator for melee/ranged/spell actions.
+- [x] Add spell target mode support layer and confirmation validation flow.
+- [x] Add deterministic tactical enemy movement/attack decision helpers.
+- [x] Add reinforcement join checks during ongoing combat rounds.
+- [x] Add self-check coverage for LOS/range/movement constraints.
+
+Acceptance Criteria:
+- [x] Player can move during combat within per-turn movement limits.
+- [x] Targets behind walls cannot be attacked unless explicitly allowed by ability rules.
+- [x] Encounters can include multiple enemies from the same local group.
+- [x] Nearby hostiles can join an active encounter under explicit detection rules.
+
+Progress notes (2026-03-05):
+- Completed Phase 7 Pass 1 + Pass 2 scaffolding:
+  - Added encounter roster context and reset/rebuild flows.
+  - Added initiative order model with deterministic seed-based rolls and stable tie-breaking.
+  - Added encounter turn cursor helpers (advance, prune, player/enemy cursor targeting).
+  - Surfaced encounter turn diagnostics (`EncTurn`, `EncCurrent`) for runtime visibility.
+- Added Phase 7 self-check coverage for initiative core:
+  - deterministic ordering consistency with same seed,
+  - explicit tie-break ordering behavior,
+  - turn index advancement wrap-around and edge-case normalization.
+- Completed Phase 7 Pass 3 movement implementation:
+  - Added per-turn movement budget model using race baseline (`Dwarf 5`, `Human 6`, `Elf 7`) with heavy armor penalty floor.
+  - Added reachable-tile computation and in-combat movement mode with move-point spend + world overlay.
+  - Added movement diagnostics and self-check coverage for movement budgets and blocked-tile reachable sets.
+- Completed Phase 7 Pass 4 target validation + target selection UX:
+  - Added unified encounter target validator (`range + LOS + alive`) used by melee, spells, and enemy attacks.
+  - Added combat target cycling (`LEFT/RIGHT`) and surfaced target legality in combat and spell UI.
+  - Added LOS/range/dead-target self-check coverage in the phase check suite.
+- Completed Phase 7 Pass 5 support layer for explicit spell targeting mode:
+  - Added `EncounterSpellTargetingRules` with explicit mode helpers (`Disabled/SelectTarget/ConfirmTarget`) and deterministic target-index cycling for integration.
+  - Added `EncounterSpellTargetingRangePolicy` for level-based spell range resolution (`cantrip=5`, `L1=6`, `L2=7`, `L3+=8`).
+  - Extended phase self-check coverage with explicit mode, range policy, and spell-target validation behavior checks.
+- Completed Phase 7 Pass 6 tactical enemy decision helper slice:
+  - Added `EncounterEnemyTactics` deterministic movement helper for enemy step pathing toward a target under movement budget + blocker constraints.
+  - Added tactical enemy attack feasibility helper that enforces alive-target + range + LOS gating.
+  - Extended Phase 7 self-checks with tactical movement and attack-feasibility validation cases.
+- Completed Phase 7 Pass 6 runtime integration:
+  - Added enemy-turn phase loop that advances by initiative ownership until player turn returns.
+  - Added reinforcement join checks during active combat rounds using ally-family + LOS + join-distance constraints.
+  - Added tactical enemy turn behavior in runtime: enemies attempt legal repositioning before attack resolution.
+  - Added enemy-phase safety cap to prevent infinite turn loops per player action.
+- Completed Phase 7 Pass 7 validation+tuning slice:
+  - Added reinforcement helper self-check coverage for positive join behavior (`ally match + in range + LOS`).
+  - Added reinforcement helper self-check coverage for blocked join behavior (`no ally match`, `out of range`, `no LOS`, `encounter cap full`).
+  - Validation run: `dotnet build -c Release` and `dotnet run -c Release -- --phase7-checks`.
 
 Locked decisions (2026-03-05):
 - Minimum feat count target for this phase is `60`.
 - Feat progression baseline is creation pick + every 4 levels.
 - Class bonus feats are postponed to a later phase.
 - This document remains the single authoritative plan to avoid oversight/redundant work.
+
+## Phase 8 - City Hub and Story Spine (Planned)
+
+Goal:
+- Add a city-return loop that anchors progression and delivers story beats between dungeon runs.
+
+Scope:
+- Automatic return to city after run exit/retreat milestones.
+- City services:
+  - healing/rest
+  - vendor/shop
+  - stash/inventory management
+  - next-run preparation
+- Story delivery in city:
+  - short scene beats between runs
+  - NPC dialogue progression flags
+  - boss/faction breadcrumbs tied to dungeon progress
+- City progression:
+  - unlockable services/NPCs by milestone.
+
+Checklist:
+- [ ] Add city map/state and transition flow from dungeon to city and back.
+- [ ] Add baseline city services (`Heal`, `Shop`, `Stash`, `Depart`).
+- [ ] Add first narrative scene chain tied to Floor 1 completion milestones.
+- [ ] Add NPC progression flags and save/load persistence.
+- [ ] Add city objective UI so player always knows next step.
+
+Acceptance Criteria:
+- [ ] Player can complete dungeon segment and return to city without friction.
+- [ ] City interaction changes next dungeon run readiness (supplies/build options).
+- [ ] At least one story beat fires in city after dungeon progress.
+- [ ] City progression state persists correctly across save/load.
+
+Progress notes (2026-03-05):
+- Added by user request as the next major expansion track after tactical-combat baseline completion.
 
 ## Global Design Rules
 
