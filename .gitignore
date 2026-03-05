@@ -1,0 +1,21 @@
+bin/
+obj/
+.vs/
+.idea/
+.vscode/
+
+# Local dotnet caches used in this workspace
+.dotnet_cli/
+.nuget/
+
+# User/runtime artifacts
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.log
+
+# Local save/log output created by the game
+saves/
+logs/
+
