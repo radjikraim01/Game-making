@@ -30,8 +30,6 @@ public sealed class PlayerSnapshot
     public int SpellPickPoints { get; set; }
     public int MaxHp { get; set; }
     public int CurrentHp { get; set; }
-    public int MaxMana { get; set; }
-    public int CurrentMana { get; set; }
     public bool HasUsedSecondWind { get; set; }
     public List<string> SkillIds { get; set; } = new();
     public List<string> FeatIds { get; set; } = new();
@@ -54,6 +52,73 @@ public sealed class EnemySnapshot
     public string? LootItemId { get; set; }
     public int LootItemQuantity { get; set; }
     public int EnemyAttackBonus { get; set; }
+    public List<EnemyStatusSnapshot> StatusEffects { get; set; } = new();
+}
+
+public sealed class EnemyStatusSnapshot
+{
+    public string Kind { get; set; } = string.Empty;
+    public int Potency { get; set; }
+    public int RemainingTurns { get; set; }
+    public string SourceSpellId { get; set; } = string.Empty;
+    public string SourceLabel { get; set; } = string.Empty;
+    public string? RepeatSaveStat { get; set; }
+    public int SaveDc { get; set; }
+    public bool BreaksOnDamageTaken { get; set; }
+}
+
+public sealed class CombatHazardStatusSnapshot
+{
+    public string Kind { get; set; } = string.Empty;
+    public int Potency { get; set; }
+    public int DurationTurns { get; set; }
+    public int ChancePercent { get; set; } = 100;
+    public string? InitialSaveStat { get; set; }
+    public string? RepeatSaveStat { get; set; }
+    public bool BreaksOnDamageTaken { get; set; }
+}
+
+public sealed class ConcentrationSnapshot
+{
+    public string SpellId { get; set; } = string.Empty;
+    public string SpellLabel { get; set; } = string.Empty;
+    public int RemainingRounds { get; set; }
+}
+
+public sealed class SummonSnapshot
+{
+    public string SummonTypeId { get; set; } = string.Empty;
+    public int CurrentHp { get; set; }
+}
+
+public sealed class TransformationSnapshot
+{
+    public string SourceSpellId { get; set; } = string.Empty;
+    public string FormId { get; set; } = string.Empty;
+    public int TempHpRemaining { get; set; }
+    public bool FirstHitPrimed { get; set; }
+}
+
+public sealed class CombatHazardSnapshot
+{
+    public string InstanceId { get; set; } = string.Empty;
+    public string SourceSpellId { get; set; } = string.Empty;
+    public string SourceLabel { get; set; } = string.Empty;
+    public string Element { get; set; } = string.Empty;
+    public int BaseDamage { get; set; }
+    public int Variance { get; set; }
+    public int ArmorBypass { get; set; }
+    public int CenterX { get; set; }
+    public int CenterY { get; set; }
+    public int RadiusTiles { get; set; }
+    public int RemainingRounds { get; set; }
+    public bool FollowsPlayer { get; set; }
+    public bool RequiresConcentration { get; set; }
+    public bool TriggersOnTurnStart { get; set; }
+    public bool TriggersOnEntry { get; set; }
+    public string? InitialSaveStat { get; set; }
+    public string SaveDamageBehavior { get; set; } = nameof(SpellSaveDamageBehavior.None);
+    public List<CombatHazardStatusSnapshot> OnTriggerStatuses { get; set; } = new();
 }
 
 public sealed class LootDropSnapshot
@@ -127,6 +192,41 @@ public sealed class GameSaveSnapshot
     public List<MajorConditionSnapshot> MajorConditions { get; set; } = new();
     public List<InventoryItemSnapshot> InventoryItems { get; set; } = new();
     public List<LootDropSnapshot> GroundLoot { get; set; } = new();
+    public ConcentrationSnapshot? ActiveConcentration { get; set; }
+    public SummonSnapshot? ActiveSummon { get; set; }
+    public TransformationSnapshot? ActiveTransformation { get; set; }
+    public List<CombatHazardSnapshot> CombatHazards { get; set; } = new();
+    public List<PlayerConditionSaveEntry>? PlayerConditions { get; set; }
+    // Batch 1 — non-concentration buff state (persistent across turns)
+    public bool MageArmorActive { get; set; }
+    public int AidMaxHpBonus { get; set; }
+    public int PlayerTempHp { get; set; }
+    public bool ShieldSpellActive { get; set; }
+    public int ShieldSpellTurnsLeft { get; set; }
+    // Batch 2 — non-concentration buff state
+    public int MirrorImageCharges { get; set; }
+    public bool AbsorbElementsCharged { get; set; }
+    // Batch 3 — non-concentration buff state
+    public bool HellishRebukePrimed { get; set; }
+    public int ArmorOfAgathysTempHp { get; set; }
+    public bool FireShieldActive { get; set; }
+    public bool WrathOfStormPrimed { get; set; }
+    public bool DeathWardActive { get; set; }
+    public bool HolyRebukePrimed { get; set; }
+    public bool CuttingWordsPrimed { get; set; }
+    // Batch 4+5 — non-concentration buff state
+    public bool CounterspellPrimed { get; set; }
+    public bool ElementalWeaponActive { get; set; }
+    public string ElementalWeaponElement { get; set; } = string.Empty;
+    public bool RevivifyUsed { get; set; }
+    public string ProtEnergyElement { get; set; } = string.Empty;
+}
+
+public sealed class PlayerConditionSaveEntry
+{
+    public string Kind { get; set; } = string.Empty;
+    public int Potency { get; set; }
+    public int RemainingTurns { get; set; }
 }
 
 public readonly struct SaveOperationResult
@@ -153,7 +253,7 @@ public sealed class SaveEntrySummary
 
 public static class SaveStore
 {
-    public const int CurrentSchemaVersion = 14;
+    public const int CurrentSchemaVersion = 23;
     public const int MaxManualSlot = 3;
     public const string SaveDirEnvVar = "DUNGEON_ESCAPE_SAVE_DIR";
 

@@ -18,6 +18,11 @@ public static class EncounterSpellTargetingRangePolicy
     public static int ResolveSpellRangeTiles(SpellDefinition spell)
     {
         ArgumentNullException.ThrowIfNull(spell);
+        if (spell.TargetShape == SpellTargetShape.Self)
+        {
+            return 0;
+        }
+
         return ResolveSpellRangeTiles(spell.SpellLevel);
     }
 
@@ -93,6 +98,17 @@ public static class EncounterSpellTargetingRules
         Func<int, int, int, int, bool> hasLineOfSight)
     {
         ArgumentNullException.ThrowIfNull(spell);
+        if (spell.TargetShape == SpellTargetShape.Self)
+        {
+            return new EncounterTargetValidation(
+                IsLegal: true,
+                DistanceTiles: 0,
+                MaxRangeTiles: 0,
+                InRange: true,
+                HasLineOfSight: true,
+                TargetAlive: true);
+        }
+
         return EncounterTargetingRules.Validate(
             fromX,
             fromY,

@@ -24,6 +24,49 @@ public sealed class Player
         }
     };
 
+    public static readonly Dictionary<Race, Dictionary<StatName, int>> RaceBonuses = new()
+    {
+        [Race.Human] = new Dictionary<StatName, int>
+        {
+            [StatName.Strength] = 1,
+            [StatName.Dexterity] = 1,
+            [StatName.Constitution] = 1,
+            [StatName.Intelligence] = 1,
+            [StatName.Wisdom] = 1,
+            [StatName.Charisma] = 1
+        },
+        [Race.Elf] = new Dictionary<StatName, int>
+        {
+            [StatName.Dexterity] = 2,
+            [StatName.Intelligence] = 1
+        },
+        [Race.Dwarf] = new Dictionary<StatName, int>
+        {
+            [StatName.Constitution] = 2,
+            [StatName.Wisdom] = 1
+        },
+        [Race.HalfOrc] = new Dictionary<StatName, int>
+        {
+            [StatName.Strength] = 2,
+            [StatName.Constitution] = 1
+        },
+        [Race.Halfling] = new Dictionary<StatName, int>
+        {
+            [StatName.Dexterity] = 2,
+            [StatName.Charisma] = 1
+        },
+        [Race.Gnome] = new Dictionary<StatName, int>
+        {
+            [StatName.Intelligence] = 2,
+            [StatName.Constitution] = 1
+        },
+        [Race.Tiefling] = new Dictionary<StatName, int>
+        {
+            [StatName.Charisma] = 2,
+            [StatName.Intelligence] = 1
+        }
+    };
+
     // D&D-like early game curve (first 6 levels): 300, 900, 2700, 6500, 14000 cumulative XP.
     private static readonly int[] CumulativeXpByLevel =
     {
@@ -44,11 +87,27 @@ public sealed class Player
         Name = name;
         Gender = gender;
         Race = race;
-        Stats = characterClass.BaseStats.Clone();
+        Stats = new Stats
+        {
+            Strength = 10,
+            Dexterity = 10,
+            Constitution = 10,
+            Intelligence = 10,
+            Wisdom = 10,
+            Charisma = 10
+        };
 
         foreach (var kv in GenderModifiers[gender])
         {
             Stats.Add(kv.Key, kv.Value);
+        }
+
+        if (RaceBonuses.TryGetValue(race, out var raceMods))
+        {
+            foreach (var kv in raceMods)
+            {
+                Stats.Add(kv.Key, kv.Value);
+            }
         }
 
         Level = 1;
@@ -64,8 +123,9 @@ public sealed class Player
 
         MaxHp = CalcMaxHp();
         CurrentHp = MaxHp;
-        MaxMana = CalcMaxMana();
-        CurrentMana = MaxMana;
+
+        // Auto-grant level 1 class talents
+        GrantClassTalentsForLevel(1);
     }
 
     public int X { get; set; }
@@ -85,8 +145,6 @@ public sealed class Player
     public List<FeatDefinition> Feats { get; }
     public int MaxHp { get; private set; }
     public int CurrentHp { get; set; }
-    public int MaxMana { get; private set; }
-    public int CurrentMana { get; set; }
     public bool HasUsedSecondWind { get; set; }
 
     public bool IsAlive => CurrentHp > 0;
@@ -96,10 +154,50 @@ public sealed class Player
         return (int)Math.Floor((Stats.Get(stat) - 10) / 2.0);
     }
 
+    public int ProficiencyBonus => Math.Clamp(2 + Math.Max(0, (Level - 1) / 4), 2, 6);
+
+    public bool IsProficientInSave(StatName stat)
+        => CharacterClass.SaveProficiencies.Contains(stat)
+           || Feats.Any(f => f.GrantsSaveProficiency == stat);
+
+    public int GetSaveBonus(StatName stat)
+        => Mod(stat) + (IsProficientInSave(stat) ? ProficiencyBonus : 0);
+
+    public int GetArmorClass(ArmorCategory armorCategory, int shieldBonus = 0)
+    {
+        var dexMod = Mod(StatName.Dexterity);
+        int baseAC, maxDexBonus;
+        switch (armorCategory)
+        {
+            case ArmorCategory.Light:
+                baseAC = 11; maxDexBonus = 99; break;
+            case ArmorCategory.Medium:
+                baseAC = 14; maxDexBonus = 2; break;
+            case ArmorCategory.Heavy:
+                baseAC = 18; maxDexBonus = 0; break;
+            default: // Unarmored
+                baseAC = 10; maxDexBonus = 99;
+                if (HasFeat("unarmored_defense_feat")) baseAC += 2;
+                break;
+        }
+        var effectiveDex = Math.Min(dexMod, maxDexBonus);
+        return baseAC + effectiveDex + DefenseBonus + shieldBonus;
+    }
+
     public bool HasSkill(string id) => _skillIds.Contains(id);
     public bool HasFeat(string id) => _featIds.Contains(id);
     public bool KnowsSpell(string id) => _knownSpellIds.Contains(id);
     public bool IsCasterClass => SpellData.SpellSlotsByClass.ContainsKey(CharacterClass.Name);
+
+    public StatName CastingStat => CharacterClass.Name switch
+    {
+        "Mage"    => StatName.Intelligence,
+        "Cleric"  => StatName.Wisdom,
+        "Ranger"  => StatName.Wisdom,
+        "Bard"    => StatName.Charisma,
+        "Paladin" => StatName.Charisma,
+        _         => StatName.Intelligence
+    };
 
     public void AddFeatPoints(int amount)
     {
@@ -113,15 +211,10 @@ public sealed class Player
         return Feats.Sum(selector);
     }
 
-    public int SpellDamageBonus
-    {
-        get
-        {
-            return SumFeatBonus(feat => feat.SpellDamageBonus);
-        }
-    }
-
+    public int SpellDamageBonus => SumFeatBonus(feat => feat.SpellDamageBonus);
     public int SpellArmorBypassBonus => SumFeatBonus(feat => feat.SpellArmorBypassBonus);
+    public int InitiativeBonus => SumFeatBonus(feat => feat.InitiativeBonus);
+    public int HealingBonus => SumFeatBonus(feat => feat.HealingBonus);
 
     public int GetSpellSlots(int spellLevel)
     {
@@ -143,12 +236,20 @@ public sealed class Player
         return true;
     }
 
+    public void RestoreSpellSlot(int spellLevel, int amount = 1)
+    {
+        if (spellLevel < 1 || spellLevel > 3) return;
+        _spellSlotsCurrent[spellLevel] = Math.Min(_spellSlotsMax[spellLevel], _spellSlotsCurrent[spellLevel] + amount);
+    }
+
     public IReadOnlyList<SpellDefinition> GetKnownSpells()
     {
         return _knownSpellIds
             .Where(SpellData.ById.ContainsKey)
             .Select(id => SpellData.ById[id])
-            .OrderBy(spell => spell.SpellLevel)
+            .Where(SpellData.IsPlayerVisible)
+            .OrderBy(spell => SpellData.GetCombatFamilySortOrder(spell))
+            .ThenBy(spell => spell.SpellLevel)
             .ThenBy(spell => spell.Name)
             .ToList();
     }
@@ -165,7 +266,9 @@ public sealed class Player
             .Distinct()
             .Where(SpellData.ById.ContainsKey)
             .Select(id => SpellData.ById[id])
-            .OrderBy(spell => spell.SpellLevel)
+            .Where(SpellData.IsPlayerVisible)
+            .OrderBy(spell => SpellData.GetCombatFamilySortOrder(spell))
+            .ThenBy(spell => spell.SpellLevel)
             .ThenBy(spell => spell.Name)
             .ToList();
     }
@@ -193,6 +296,12 @@ public sealed class Player
         if (!string.Equals(spell.ClassName, CharacterClass.Name, StringComparison.Ordinal))
         {
             reason = "Not a spell for your class.";
+            return false;
+        }
+
+        if (!SpellData.IsPlayerVisible(spell))
+        {
+            reason = "Archived spell.";
             return false;
         }
 
@@ -249,7 +358,7 @@ public sealed class Player
         {
             var bonus = 0;
             if (HasSkill("brute_force")) bonus += 2 + Math.Max(0, (int)Math.Floor(Mod(StatName.Strength) * 0.5));
-            if (HasSkill("arcane_surge")) bonus += 3 + Math.Max(0, Mod(StatName.Intelligence));
+            if (HasSkill("arcane_surge")) bonus += 3 + Math.Max(0, Mod(CastingStat));
             if (HasSkill("inspire")) bonus += 2 + Math.Max(0, (int)Math.Floor(Mod(StatName.Charisma) * 0.5));
             bonus += SumFeatBonus(feat => feat.MeleeDamageBonus);
             return bonus;
@@ -258,16 +367,18 @@ public sealed class Player
 
     public int WarCryBonus => HasSkill("war_cry") ? 3 + Math.Max(0, (int)Math.Floor(Mod(StatName.Strength) * 0.5)) : 0;
 
-    public int CritBonus
+    public int ExpandedCritRange
     {
         get
         {
             var bonus = 0;
-            if (HasSkill("eagle_eye")) bonus += 2 + Math.Max(0, Mod(StatName.Dexterity));
-            bonus += SumFeatBonus(feat => feat.CritChanceBonus);
+            if (HasSkill("eagle_eye")) bonus += 1;
+            bonus += SumFeatBonus(feat => feat.CritRangeBonus);
             return bonus;
         }
     }
+
+    public int CritThreshold => Math.Max(2, 20 - ExpandedCritRange);
 
     public int DefenseBonus
     {
@@ -276,6 +387,8 @@ public sealed class Player
             var bonus = 0;
             if (HasSkill("iron_skin")) bonus += 1 + Math.Max(0, (int)Math.Floor(Mod(StatName.Constitution) * 0.5));
             bonus += SumFeatBonus(feat => feat.DefenseBonus);
+            // Aura of Protection: Paladin feat — CHA modifier added to defense permanently
+            if (HasFeat("paladin_aura_protection_feat")) bonus += Math.Max(0, Mod(StatName.Charisma));
             return bonus;
         }
     }
@@ -293,8 +406,12 @@ public sealed class Player
 
     public int PoisonDamage => HasSkill("poison_blade") ? 1 + Math.Max(0, (int)Math.Floor(Mod(StatName.Dexterity) * 0.5)) : 0;
     public int SecondWindHeal => 10 + Math.Max(0, Mod(StatName.Constitution));
-    public int ManaShieldAbsorb => 5 + Math.Max(0, Mod(StatName.Intelligence));
+    public int ArcaneWardAbsorb => 5 + Math.Max(0, Mod(CastingStat));
     public bool HasBonusAttack => HasSkill("swift_strikes");
+    public int ChannelDivinityBonus => Math.Max(1, Mod(StatName.Wisdom));
+    public int BlessedHealerBonus => Math.Max(0, Mod(StatName.Wisdom));
+    public int LayOnHandsHeal => Level * 3;
+    public int HuntersInstinctBonus => HasSkill("hunters_instinct") ? 2 : 0;
 
     public double XpMultiplier
     {
@@ -331,12 +448,31 @@ public sealed class Player
         return true;
     }
 
+    public bool RefundAllocatedStatPoint(StatName stat)
+    {
+        if (Stats.Get(stat) <= 1)
+        {
+            return false;
+        }
+
+        Stats.Add(stat, -1);
+        StatPoints += 1;
+        RecalcMaxStats();
+        return true;
+    }
+
     public void AllocateCreationStatPoint(StatName stat)
     {
         Stats.Add(stat, 1);
         RecalcMaxStats();
         CurrentHp = MaxHp;
-        CurrentMana = MaxMana;
+    }
+
+    public void DeallocateCreationStatPoint(StatName stat)
+    {
+        Stats.Add(stat, -1);
+        RecalcMaxStats();
+        CurrentHp = MaxHp;
     }
 
     public void LearnSkill(Skill skill)
@@ -347,6 +483,26 @@ public sealed class Player
         RecalcMaxStats();
     }
 
+    public void GrantClassTalentsForLevel(int level)
+    {
+        if (!SkillBook.ClassTalentProgression.TryGetValue(CharacterClass.Name, out var progression)) return;
+        foreach (var (minLevel, skillId) in progression)
+        {
+            if (minLevel != level) continue;
+            var skill = SkillBook.All.FirstOrDefault(s => s.Id == skillId);
+            if (skill != null) LearnSkill(skill);
+        }
+    }
+
+    public IReadOnlyList<(int Level, string SkillId, string Name)> GetClassTalentRoadmap()
+    {
+        if (!SkillBook.ClassTalentProgression.TryGetValue(CharacterClass.Name, out var progression))
+            return Array.Empty<(int, string, string)>();
+        return progression
+            .Select(p => (p.Level, p.SkillId, SkillBook.All.FirstOrDefault(s => s.Id == p.SkillId)?.Name ?? p.SkillId))
+            .ToList();
+    }
+
     public bool LearnFeat(FeatDefinition feat)
     {
         if (!CanLearnFeat(feat, out _)) return false;
@@ -355,12 +511,16 @@ public sealed class Player
         Feats.Add(feat);
         FeatPoints -= 1;
 
-        if (feat.Id == "resilient_feat")
-        {
-            Stats.Add(StatName.Constitution, 1);
-            Stats.Add(StatName.Wisdom, 1);
-        }
+        // Apply direct stat bonuses (e.g. Resilient: +1 CON +1 WIS, Iron Will: +1 CON).
+        if (feat.StatBonusStr != 0) Stats.Add(StatName.Strength,     feat.StatBonusStr);
+        if (feat.StatBonusDex != 0) Stats.Add(StatName.Dexterity,    feat.StatBonusDex);
+        if (feat.StatBonusCon != 0) Stats.Add(StatName.Constitution, feat.StatBonusCon);
+        if (feat.StatBonusInt != 0) Stats.Add(StatName.Intelligence, feat.StatBonusInt);
+        if (feat.StatBonusWis != 0) Stats.Add(StatName.Wisdom,       feat.StatBonusWis);
+        if (feat.StatBonusCha != 0) Stats.Add(StatName.Charisma,     feat.StatBonusCha);
 
+        // Sync spell slots in case this feat grants bonus slots.
+        SyncSpellSlots(fullRestore: false);
         RecalcMaxStats();
         return true;
     }
@@ -390,6 +550,13 @@ public sealed class Player
         if (feat.RequiresCasterClass && !IsCasterClass)
         {
             reason = feat.PrerequisiteText ?? "Requires a spellcasting class.";
+            return false;
+        }
+
+        if (!string.IsNullOrEmpty(feat.RequiredClassName) &&
+            !string.Equals(feat.RequiredClassName, CharacterClass.Name, StringComparison.OrdinalIgnoreCase))
+        {
+            reason = feat.PrerequisiteText ?? $"Requires {feat.RequiredClassName} class.";
             return false;
         }
 
@@ -460,40 +627,47 @@ public sealed class Player
         {
             "toughness" => $"+{5 + Math.Max(0, Mod(StatName.Constitution))} Max HP",
             "fast_learner" => $"+{(int)Math.Round(XpMultiplier * 100 - 100)}% XP",
-            "meditation" => $"+{5 + Math.Max(0, Mod(StatName.Wisdom))} Max MP",
+            "meditation" => "Recover 1 L1 slot at rest",
             "brute_force" => $"+{2 + Math.Max(0, (int)Math.Floor(Mod(StatName.Strength) * 0.5))} Melee Dmg",
             "war_cry" => $"+{WarCryBonus} First-Strike",
             "iron_skin" => $"+{DefenseBonus} Defense",
             "second_wind" => $"Heal {SecondWindHeal} HP",
-            "eagle_eye" => $"+{CritBonus}% Crit",
+            "eagle_eye" => ExpandedCritRange > 0 ? $"Crit on {CritThreshold}-20" : "Crit on 19-20",
             "shadowstep" => $"+{FleeBonus}% Flee",
             "swift_strikes" => "Bonus attack roll",
             "poison_blade" => $"+{PoisonDamage} Poison/turn",
-            "arcane_surge" => $"+{3 + Math.Max(0, Mod(StatName.Intelligence))} Magic Dmg",
-            "mana_shield" => $"Absorb {ManaShieldAbsorb} dmg for 3 MP",
+            "arcane_surge" => $"+{3 + Math.Max(0, Mod(CastingStat))} Magic Dmg",
+            "mana_shield" => $"Absorb {ArcaneWardAbsorb} dmg (once per combat)",
             "inspire" => $"+{2 + Math.Max(0, (int)Math.Floor(Mod(StatName.Charisma) * 0.5))} All Dmg",
+            "channel_divinity" => $"+{ChannelDivinityBonus} divine spell dmg (once per combat)",
+            "blessed_healer" => $"+{BlessedHealerBonus} HP per heal",
+            "cutting_words" => "Reduce enemy attack by 1d4 (once per combat)",
+            "lay_on_hands" => $"Heal {LayOnHandsHeal} HP (once per combat)",
+            "hunters_instinct" => "+2 dmg to marked targets",
             _ => skill.Effect
         };
     }
 
     public string GetFeatEffectText(FeatDefinition feat)
     {
-        if (string.Equals(feat.Id, "resilient_feat", StringComparison.Ordinal))
-        {
-            return "+1 Constitution and +1 Wisdom";
-        }
-
         var parts = new List<string>();
-        if (feat.MeleeDamageBonus != 0) parts.Add($"+{feat.MeleeDamageBonus} Melee Damage");
-        if (feat.SpellDamageBonus != 0) parts.Add($"+{feat.SpellDamageBonus} Spell Damage");
-        if (feat.DefenseBonus != 0) parts.Add($"+{feat.DefenseBonus} Defense");
-        if (feat.CritChanceBonus != 0) parts.Add($"+{feat.CritChanceBonus}% Crit Chance");
-        if (feat.FleeChanceBonus != 0) parts.Add($"+{feat.FleeChanceBonus}% Flee Chance");
+        if (feat.MeleeDamageBonus != 0)    parts.Add($"+{feat.MeleeDamageBonus} Melee Damage");
+        if (feat.SpellDamageBonus != 0)    parts.Add($"+{feat.SpellDamageBonus} Spell Damage");
+        if (feat.DefenseBonus != 0)        parts.Add($"+{feat.DefenseBonus} Defense");
+        if (feat.CritChanceBonus != 0)     parts.Add($"+{feat.CritChanceBonus}% Crit Chance");
+        if (feat.FleeChanceBonus != 0)     parts.Add($"+{feat.FleeChanceBonus}% Flee Chance");
         if (feat.SpellArmorBypassBonus != 0) parts.Add($"Spells ignore +{feat.SpellArmorBypassBonus} armor");
-        if (feat.MaxHpFlatBonus != 0) parts.Add($"+{feat.MaxHpFlatBonus} Max HP");
-        if (feat.MaxHpPerLevelBonus != 0) parts.Add($"+{feat.MaxHpPerLevelBonus * Level} Max HP");
-        if (feat.MaxManaBonus != 0) parts.Add($"+{feat.MaxManaBonus} Max Mana");
-
+        if (feat.MaxHpFlatBonus != 0)      parts.Add($"+{feat.MaxHpFlatBonus} Max HP");
+        if (feat.MaxHpPerLevelBonus != 0)  parts.Add($"+{feat.MaxHpPerLevelBonus * Level} Max HP ({feat.MaxHpPerLevelBonus}/level)");
+        if (feat.InitiativeBonus != 0)     parts.Add($"+{feat.InitiativeBonus} Initiative");
+        if (feat.BonusSpellSlotL1 != 0)   parts.Add($"+{feat.BonusSpellSlotL1} L1 Spell Slot");
+        if (feat.HealingBonus != 0)        parts.Add($"+{feat.HealingBonus} Healing");
+        if (feat.StatBonusStr != 0)        parts.Add($"+{feat.StatBonusStr} Strength");
+        if (feat.StatBonusDex != 0)        parts.Add($"+{feat.StatBonusDex} Dexterity");
+        if (feat.StatBonusCon != 0)        parts.Add($"+{feat.StatBonusCon} Constitution");
+        if (feat.StatBonusInt != 0)        parts.Add($"+{feat.StatBonusInt} Intelligence");
+        if (feat.StatBonusWis != 0)        parts.Add($"+{feat.StatBonusWis} Wisdom");
+        if (feat.StatBonusCha != 0)        parts.Add($"+{feat.StatBonusCha} Charisma");
         if (parts.Count > 0)
         {
             return string.Join(", ", parts);
@@ -529,22 +703,30 @@ public sealed class Player
             SpellPickPoints = SpellPickPoints,
             MaxHp = MaxHp,
             CurrentHp = CurrentHp,
-            MaxMana = MaxMana,
-            CurrentMana = CurrentMana,
             HasUsedSecondWind = HasUsedSecondWind,
             SkillIds = _skillIds.OrderBy(id => id).ToList(),
             FeatIds = _featIds.OrderBy(id => id).ToList(),
-            KnownSpellIds = _knownSpellIds.OrderBy(id => id).ToList(),
+            KnownSpellIds = _knownSpellIds
+                .Where(SpellData.IsPlayerVisible)
+                .OrderBy(id => id)
+                .ToList(),
             SpellSlotsL1Current = _spellSlotsCurrent[1],
             SpellSlotsL2Current = _spellSlotsCurrent[2],
             SpellSlotsL3Current = _spellSlotsCurrent[3]
         };
     }
 
-    public static bool TryFromSnapshot(PlayerSnapshot snapshot, out Player? player, out string errorMessage)
+    public static bool TryFromSnapshot(
+        PlayerSnapshot snapshot,
+        out Player? player,
+        out string errorMessage,
+        out int removedArchivedSpellCount,
+        out int refundedArchivedSpellPicks)
     {
         player = null;
         errorMessage = string.Empty;
+        removedArchivedSpellCount = 0;
+        refundedArchivedSpellPicks = 0;
 
         if (snapshot == null)
         {
@@ -609,15 +791,29 @@ public sealed class Player
         {
             if (!SpellData.ById.TryGetValue(id, out var spell)) continue;
             if (!string.Equals(spell.ClassName, restored.CharacterClass.Name, StringComparison.Ordinal)) continue;
+            if (!SpellData.IsPlayerVisible(spell))
+            {
+                removedArchivedSpellCount += 1;
+                if (!spell.IsCantrip)
+                {
+                    refundedArchivedSpellPicks += 1;
+                }
+
+                continue;
+            }
+
             restored._knownSpellIds.Add(spell.Id);
+        }
+
+        if (refundedArchivedSpellPicks > 0)
+        {
+            restored.SpellPickPoints += refundedArchivedSpellPicks;
         }
 
         restored.EnsureFreeCantripsKnown();
 
         restored.MaxHp = restored.CalcMaxHp();
-        restored.MaxMana = restored.CalcMaxMana();
         restored.CurrentHp = Math.Clamp(snapshot.CurrentHp, 0, restored.MaxHp);
-        restored.CurrentMana = Math.Clamp(snapshot.CurrentMana, 0, restored.MaxMana);
 
         restored.SyncSpellSlots(fullRestore: true);
         restored._spellSlotsCurrent[1] = Math.Clamp(snapshot.SpellSlotsL1Current, 0, restored._spellSlotsMax[1]);
@@ -640,19 +836,14 @@ public sealed class Player
 
     private int CalcMaxHp()
     {
-        var baseHp = 10 + Stats.Constitution * 2;
-        var skillBonus = HasSkill("toughness") ? 5 + Math.Max(0, Mod(StatName.Constitution)) : 0;
+        var conMod = Mod(StatName.Constitution);
+        // Level 1: max hit die + CON mod. Each subsequent level: average hit die + CON mod (min 1).
+        var levelOneHp = CharacterClass.HitDie + conMod;
+        var perLevel = Math.Max(1, CharacterClass.HitDie / 2 + 1 + conMod);
+        var baseHp = Math.Max(1, levelOneHp) + perLevel * (Level - 1);
+        var skillBonus = HasSkill("toughness") ? 5 + Math.Max(0, conMod) : 0;
         var featBonus = SumFeatBonus(feat => feat.MaxHpPerLevelBonus * Level + feat.MaxHpFlatBonus);
-
         return baseHp + skillBonus + featBonus;
-    }
-
-    private int CalcMaxMana()
-    {
-        var baseMana = 5 + Stats.Wisdom;
-        var skillBonus = HasSkill("meditation") ? 5 + Math.Max(0, Mod(StatName.Wisdom)) : 0;
-        var featBonus = SumFeatBonus(feat => feat.MaxManaBonus);
-        return baseMana + skillBonus + featBonus;
     }
 
     private void LevelUp()
@@ -672,7 +863,6 @@ public sealed class Player
         SyncSpellSlots(fullRestore: true);
         RecalcMaxStats();
         CurrentHp = MaxHp;
-        CurrentMana = MaxMana;
     }
 
     private void RecalcMaxStats()
@@ -681,11 +871,16 @@ public sealed class Player
         var hpGain = Math.Max(0, newMaxHp - MaxHp);
         MaxHp = newMaxHp;
         CurrentHp = Math.Min(CurrentHp + hpGain, MaxHp);
+    }
 
-        var newMaxMana = CalcMaxMana();
-        var mpGain = Math.Max(0, newMaxMana - MaxMana);
-        MaxMana = newMaxMana;
-        CurrentMana = Math.Min(CurrentMana + mpGain, MaxMana);
+    /// <summary>Adjust MaxHp by a flat amount (e.g. Aid +5). Caller manages revert.</summary>
+    public void AdjustMaxHp(int delta)
+    {
+        MaxHp = Math.Max(1, MaxHp + delta);
+        if (delta > 0)
+            CurrentHp = Math.Min(CurrentHp + delta, MaxHp);
+        else
+            CurrentHp = Math.Min(CurrentHp, MaxHp);
     }
 
     private int GetXpToNextLevel(int currentLevel)
@@ -711,7 +906,7 @@ public sealed class Player
 
         var effectiveLevel = Math.Min(6, Math.Max(1, Level));
         var slots = progression[effectiveLevel];
-        _spellSlotsMax[1] = slots.L1;
+        _spellSlotsMax[1] = slots.L1 + SumFeatBonus(feat => feat.BonusSpellSlotL1);
         _spellSlotsMax[2] = slots.L2;
         _spellSlotsMax[3] = slots.L3;
 
@@ -740,6 +935,7 @@ public sealed class Player
             if (unlock.MinLevel > Level) continue;
             if (!SpellData.ById.TryGetValue(unlock.SpellId, out var spell)) continue;
             if (!spell.IsCantrip) continue;
+            if (!SpellData.IsPlayerVisible(spell)) continue;
             _knownSpellIds.Add(spell.Id);
         }
     }

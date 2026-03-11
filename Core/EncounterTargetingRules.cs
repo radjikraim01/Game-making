@@ -43,6 +43,38 @@ public static class EncounterTargetingRules
         return Math.Abs(toX - fromX) + Math.Abs(toY - fromY);
     }
 
+    // Chebyshev distance: counts diagonal steps as 1 (king's move). Used for melee range only.
+    public static int GetMeleeDistance(int fromX, int fromY, int toX, int toY)
+    {
+        return Math.Max(Math.Abs(toX - fromX), Math.Abs(toY - fromY));
+    }
+
+    // Melee overload uses Chebyshev so all 8 adjacent tiles count as range 1.
+    public static EncounterTargetValidation ValidateMelee(
+        int fromX,
+        int fromY,
+        int toX,
+        int toY,
+        bool targetAlive,
+        int maxRangeTiles,
+        bool requiresLineOfSight,
+        Func<int, int, int, int, bool> hasLineOfSight)
+    {
+        ArgumentNullException.ThrowIfNull(hasLineOfSight);
+        maxRangeTiles = Math.Max(1, maxRangeTiles);
+        var distance = GetMeleeDistance(fromX, fromY, toX, toY);
+        var inRange = distance <= maxRangeTiles;
+        var los = !requiresLineOfSight || hasLineOfSight(fromX, fromY, toX, toY);
+        var legal = targetAlive && inRange && los;
+        return new EncounterTargetValidation(
+            IsLegal: legal,
+            DistanceTiles: distance,
+            MaxRangeTiles: maxRangeTiles,
+            InRange: inRange,
+            HasLineOfSight: los,
+            TargetAlive: targetAlive);
+    }
+
     public static EncounterTargetValidation Validate(
         int fromX,
         int fromY,

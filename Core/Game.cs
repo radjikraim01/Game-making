@@ -4,6 +4,14 @@ namespace DungeonEscape.Core;
 
 public sealed class Game : IDisposable
 {
+    private static Font _uiFont;
+    private static bool _uiFontInitialized;
+    private static bool _uiFontLoadedFromFile;
+    private const float UiFontSpacing = 1f;
+    private const string PrimaryUiFontPath = @"C:\Windows\Fonts\segoeui.ttf";
+    private const string SecondaryUiFontPath = @"C:\Windows\Fonts\verdana.ttf";
+    private const string TertiaryUiFontPath = @"C:\Windows\Fonts\trebuc.ttf";
+
     private enum InventoryItemKind
     {
         Consumable,
@@ -162,6 +170,19 @@ public sealed class Game : IDisposable
         Rare
     }
 
+    private static readonly (EquipmentSlot Slot, int SlotIndex, string Label)[] PauseEquipmentDisplaySlots =
+    {
+        (EquipmentSlot.MainHand, 0, "Main Hand"),
+        (EquipmentSlot.OffHand, 0, "Off Hand"),
+        (EquipmentSlot.Armor, 0, "Armor"),
+        (EquipmentSlot.Head, 0, "Head"),
+        (EquipmentSlot.Neck, 0, "Neck"),
+        (EquipmentSlot.Cloak, 0, "Cloak"),
+        (EquipmentSlot.Belt, 0, "Belt"),
+        (EquipmentSlot.Ring, 0, "Ring 1"),
+        (EquipmentSlot.Ring, 1, "Ring 2")
+    };
+
     private sealed class GroundLoot
     {
         public required string Id { get; init; }
@@ -226,6 +247,7 @@ public sealed class Game : IDisposable
     private int _selectedCombatSkillIndex;
     private int _selectedSpellIndex;
     private int _selectedCombatItemIndex;
+    private int _combatSkillMenuOffset;
     private int _skillMenuOffset;
     private int _spellMenuOffset;
     private int _combatItemMenuOffset;
@@ -238,6 +260,9 @@ public sealed class Game : IDisposable
     private int _creationSelectionIndex;
     private int _creationPointsRemaining;
     private int _pauseMenuIndex;
+    private int _pauseInventoryOffset;
+    private int _pauseSaveOffset;
+    private int _pauseLoadOffset;
     private int _selectedRewardOptionIndex;
 
     private string _startMenuMessage = string.Empty;
@@ -248,6 +273,7 @@ public sealed class Game : IDisposable
     private string _pauseMessage = string.Empty;
     private string _rewardMessage = string.Empty;
     private string _selectedPlayerSpriteId = "knight_m";
+    private bool _creationClassConfirmed;
     private bool _spellSelectionStartsAdventure;
     private bool _rewardMessageRequiresAcknowledge;
     private bool _bossDefeated;
@@ -292,21 +318,134 @@ public sealed class Game : IDisposable
     private readonly List<string> _creationChosenFeatOrder = new();
     private readonly int[] _creationAllocatedStats = new int[6];
     private readonly List<int> _creationStatAllocationOrder = new();
+    private readonly int[] _levelUpAllocatedStats = new int[6];
+    private readonly List<int> _levelUpStatAllocationOrder = new();
+    private bool _levelUpSessionActive;
     private readonly List<SaveEntrySummary> _pauseSaveEntries = new();
     private readonly List<SaveEntrySummary> _pauseLoadEntries = new();
     private readonly List<string> _combatLog = new();
     private Enemy? _currentEnemy;
-    private int _enemyPoisoned;
     private bool _warCryAvailable;
+    private bool _arcaneWardUsedThisCombat;
+    private bool _channelDivinityUsedThisCombat;
+    private bool _cuttingWordsUsedThisCombat;
+    private bool _layOnHandsUsedThisCombat;
+    private bool _channelDivinityPrimed;
+    // Phase B active feat state
+    private bool _battleCryUsedThisCombat;
+    private bool _battleCryPrimed;
+    private bool _vanishUsedThisCombat;
+    private bool _vanishPrimed;
+    private bool _divineSmiteUsedThisCombat;
+    private bool _divineSmitePrimed;
+    private bool _empowerSpellUsedThisCombat;
+    private bool _empowerSpellPrimed;
+    private bool _divineFavorUsedThisCombat;
+    private bool _divineFavorActive;
+    private bool _magicWeaponActive;
+    private bool _flameArrowsActive;
+    private bool _zephyrStrikeActive;
+    private bool _zephyrStrikeHitPrimed;
+    private bool _crusadersMantleActive;
+    // Batch 1 buff state
+    private bool _shieldOfFaithActive;
+    private bool _blessActive;
+    private bool _heroismActive;
+    private bool _mageArmorActive;
+    private bool _shieldSpellActive;
+    private int  _shieldSpellTurnsLeft;
+    private bool _barkskinActive;
+    private bool _blurActive;
+    private bool _hasteActive;
+    private int  _aidMaxHpBonus;
+    private int  _playerTempHp;
+    // Batch 2 — tactical combat spells
+    private int  _mirrorImageCharges;
+    private bool _absorbElementsCharged;
+    private bool _expeditiousRetreatActive;
+    private bool _longstriderActive;
+    private bool _hexActive;
+    private bool _protFromEvilActive;
+    private bool _sanctuaryActive;
+    private bool _compelledDuelActive;
+    private bool _enhanceAbilityActive;
+    // Batch 3 — reactive & retaliation spells
+    private bool _hellishRebukePrimed;
+    private int  _armorOfAgathysTempHp;
+    private bool _fireShieldActive;
+    private bool _wrathOfStormPrimed;
+    private bool _spiritShroudActive;
+    private bool _deathWardActive;
+    private bool _holyRebukePrimed;
+    private bool _thornsActive;
+    private bool _stoneskinActive;
+    private bool _cuttingWordsPrimed;
+    private bool _greaterInvisibilityActive;
+    // Batch 4 — expanded arsenal
+    private bool _counterspellPrimed;
+    private bool _invisibilityActive;
+    private bool _elementalWeaponActive;
+    private string _elementalWeaponElement = string.Empty;
+    private bool _revivifyUsed;
+    // Batch 5 — signature powers
+    private bool _blinkActive;
+    private bool _protEnergyActive;
+    private string _protEnergyElement = string.Empty;
+    private bool _beaconOfHopeActive;
+    private bool _majorImageActive;
+    private bool _auraOfCourageActive;
+    private SummonInstance? _activeSummon;
+    private TransformationInstance? _activeTransformation;
+    private string _pendingFormSpellId = string.Empty;
+    private string[] _pendingFormOptions = Array.Empty<string>();
+    private int _formSelectionIndex;
+    private bool _wordOfRenewalUsedThisCombat;
+    // D&D feat active state
+    private bool _defensiveDuelistAvailable;
+    private bool _luckyUsedThisCombat;
+    private bool _luckyPrimed;
+    private bool _sentinelAvailable;
+    private bool _indomitableAvailable;
+    private bool _uncannyDodgeAvailable;
+    private bool _enemyHasActedThisCombat;
+    private bool _metamagicUsedThisCombat;
+    private bool _metamagicPrimed;
+    private bool _sharpshooterUsedThisCombat;
+    private bool _sharpshooterPrimed;
+    private bool _countercharmAvailable;
+    private bool _riposteAvailable;
+    private bool _shieldExpertAvailable;
+    private bool _recklessAttackUsedThisCombat;
+    private bool _overchannelUsedThisCombat;
+    private bool _overchannelPrimed;
+    private bool _spiritualWeaponUsedThisCombat;
+    private bool _spiritualWeaponPrimed;
+    private bool _bardicInspirationUsedThisCombat;
+    private bool _bardicInspirationPrimed;
+    private bool _bardicInspirationForAttack;
+    private bool _enemyNextAttackDisadvantage;
+    private bool _enemyNextAttackAdvantage;
+    private string _equippedWeaponId = "unarmed";
+    private bool _playerAttackAdvantage;
+    private bool _playerAttackDisadvantage;
+    private bool _playerSaveAdvantage;
+    private bool _playerSaveDisadvantage;
     private int _packEnemiesRemainingAfterCurrent;
     private bool _encounterActive;
     private int _encounterRound = 1;
     private readonly List<Enemy> _encounterEnemies = new();
     private readonly List<EncounterInitiativeSlot> _encounterTurnOrder = new();
+    private readonly List<CombatHazardState> _activeCombatHazards = new();
     private int _encounterTurnIndex;
     private string _encounterCurrentCombatantId = string.Empty;
     private int _selectedEncounterTargetIndex = -1;
     private string _pendingCombatSpellId = string.Empty;
+    private int _pendingCombatSpellVariantIndex;
+    private int _combatSpellTargetCursorX = -1;
+    private int _combatSpellTargetCursorY = -1;
+    private string _activeConcentrationSpellId = string.Empty;
+    private string _activeConcentrationLabel = string.Empty;
+    private int _activeConcentrationRemainingRounds;
     private bool _combatMoveModeActive;
     private int _combatMovePointsMax;
     private int _combatMovePointsRemaining;
@@ -318,6 +457,7 @@ public sealed class Game : IDisposable
     private bool _settingsOptionalConditionsEnabled = true;
     private CreationConditionPreset _creationOriginCondition = CreationConditionPreset.None;
     private readonly List<MajorConditionState> _activeMajorConditions = new();
+    private readonly List<PlayerConditionState> _playerConditions = new();
     private int _dungeonConditionEventsTriggered;
     private PauseConfirmAction _pauseConfirmAction = PauseConfirmAction.None;
     private int _pauseConfirmTarget = -1;
@@ -341,6 +481,7 @@ public sealed class Game : IDisposable
     private System.Numerics.Vector2 _cameraTarget;
 
     private static readonly Gender[] Genders = { Gender.Male, Gender.Female };
+    // Only races with sprites are shown in character creation. Others remain defined for future use.
     private static readonly Race[] Races = { Race.Human, Race.Elf, Race.Dwarf };
     private static readonly string[] PauseRootOptions =
     {
@@ -359,6 +500,11 @@ public sealed class Game : IDisposable
         "Accessibility",
         "Back"
     };
+
+    public Game()
+    {
+        EnsureUiFontLoaded();
+    }
     private static readonly string[] PauseAccessibilityOptions =
     {
         "Color Profile",
@@ -377,7 +523,7 @@ public sealed class Game : IDisposable
         (
             CreationConditionPreset.ArcaneBlindness,
             "Arcane Blindness",
-            "No normal color sense. Magic sense grants perception while mana is available."
+            "No normal color sense. Magic sense grants limited perception; severe penalties without it."
         ),
         (
             CreationConditionPreset.CrushedLimb,
@@ -387,8 +533,8 @@ public sealed class Game : IDisposable
     };
     private static readonly string[] CreationSections = { "Identity", "Class", "Stats", "Spells", "Feats", "Review" };
     private const int SkillVisibleCount = 4;
-    private const int SpellMenuVisibleCount = 6;
-    private const int CombatItemVisibleCount = 6;
+    private const int SpellMenuVisibleCount = 4;
+    private const int CombatItemVisibleCount = 4;
     private const int SpellLearnVisibleCount = 5;
     private const int CreationFeatVisibleCount = 5;
     private const int FeatVisibleCount = 4;
@@ -410,9 +556,13 @@ public sealed class Game : IDisposable
 
     private static readonly Dictionary<Race, string> RaceDescriptions = new()
     {
-        [Race.Human] = "Balanced and adaptable across all classes.",
-        [Race.Elf] = "Agile and perceptive, fitting scouts and casters.",
-        [Race.Dwarf] = "Hardy and resilient, great frontline survivability."
+        [Race.Human] = "Balanced and adaptable across all classes. (+1 all stats)",
+        [Race.Elf] = "Agile and perceptive, fitting scouts and casters. (+2 DEX, +1 INT)",
+        [Race.Dwarf] = "Hardy and resilient, great frontline survivability. (+2 CON, +1 WIS)",
+        [Race.HalfOrc] = "Powerful and tough, built for the front of any fight. (+2 STR, +1 CON)",
+        [Race.Halfling] = "Quick and surprisingly charming under pressure. (+2 DEX, +1 CHA)",
+        [Race.Gnome] = "Sharp-minded and surprisingly durable for their size. (+2 INT, +1 CON)",
+        [Race.Tiefling] = "Infernal heritage sharpens both will and wit. (+2 CHA, +1 INT)"
     };
 
     private static readonly (string Id, string Label)[] PlayerAppearanceOptions =
@@ -427,6 +577,10 @@ public sealed class Game : IDisposable
         ("dwarf_f", "Dwarf (Female)"),
         ("doc", "Cleric")
     };
+    private static readonly string[] ChromaticOrbVariants = { "acid", "cold", "fire", "lightning", "poison", "thunder" };
+    private static readonly string[] CommandVariants = { "halt", "flee", "grovel" };
+    private static readonly string[] ElementalWeaponVariants = { "fire", "cold", "lightning", "thunder" };
+    private static readonly string[] ProtFromEnergyVariants = { "fire", "cold", "lightning", "acid" };
 
     private List<string> GetStartMenuOptions()
     {
@@ -486,7 +640,7 @@ public sealed class Game : IDisposable
     {
         return type switch
         {
-            MajorConditionType.ArcaneBlindness => "No normal color vision; magic sense while mana remains, severe penalties at 0 mana.",
+            MajorConditionType.ArcaneBlindness => "No normal color vision. Magic sense allows limited perception; severe spell penalties without it.",
             MajorConditionType.CrushedLimb => "Melee, defense, and flee performance reduced until restored.",
             _ => "Condition effects unknown."
         };
@@ -494,7 +648,7 @@ public sealed class Game : IDisposable
 
     private string GetConditionPurgeCostLabel()
     {
-        return $"{ConditionPurgeHealthPotionCost} Health Potion, {ConditionPurgeManaDraughtCost} Mana Draught, {ConditionPurgeSharpeningOilCost} Sharpening Oil";
+        return $"{ConditionPurgeHealthPotionCost} Health Potion, {ConditionPurgeHealingDraughtCost} Healing Draught, {ConditionPurgeSharpeningOilCost} Sharpening Oil";
     }
 
     private bool IsMajorConditionActive(MajorConditionType type)
@@ -514,7 +668,7 @@ public sealed class Game : IDisposable
 
     private bool IsBlindMageMagicSenseActive()
     {
-        return IsBlindMageModeActive() && _player != null && _player.CurrentMana > 0;
+        return IsBlindMageModeActive() && _player != null;
     }
 
     private int GetConditionMeleeModifier()
@@ -551,6 +705,32 @@ public sealed class Game : IDisposable
         }
 
         return IsBlindMageMagicSenseActive() ? 1 : -2;
+    }
+
+    private int GetAndConsumeChannelDivinityBonus()
+    {
+        if (!_channelDivinityPrimed || _player == null) return 0;
+        _channelDivinityPrimed = false;
+        return _player.ChannelDivinityBonus;
+    }
+
+    private int GetAndConsumeEmpowerSpellBonus()
+    {
+        _empowerSpellPrimed = false;
+        return 0;
+    }
+
+    private bool ConsumeEmpowerSpellPrime()
+    {
+        if (!_empowerSpellPrimed) return false;
+        _empowerSpellPrimed = false;
+        return true;
+    }
+
+    private int GetProficiencyBonus()
+    {
+        if (_player == null) return 2;
+        return Math.Clamp(2 + Math.Max(0, (_player.Level - 1) / 4), 2, 6);
     }
 
     private int GetConditionDefenseModifier()
@@ -623,25 +803,9 @@ public sealed class Game : IDisposable
 
     private void TryApplyCreationOriginConditionIfNeeded()
     {
-        _creationOriginCondition = GetSelectedCreationConditionPreset();
-        if (!_settingsOptionalConditionsEnabled)
-        {
-            return;
-        }
-
-        var mapped = TryMapCreationConditionToMajor(_creationOriginCondition);
-        if (!mapped.HasValue)
-        {
-            return;
-        }
-
-        if (!TryApplyMajorCondition(mapped.Value, "Origin", out var message))
-        {
-            return;
-        }
-
-        PushCombatLog(message);
-        ShowRewardMessage(message, requireAcknowledge: true, visibleSeconds: 10);
+        // Creation-origin conditions are temporarily disabled in the UI hotfix pass.
+        // Keep origin state deterministic to avoid hidden side effects from restored data.
+        _creationOriginCondition = CreationConditionPreset.None;
     }
 
     private void TryRollDungeonConditionFromEnemyHit(int damage)
@@ -688,15 +852,15 @@ public sealed class Game : IDisposable
     {
         reason = string.Empty;
         var healthPotion = GetInventoryItem("health_potion");
-        var manaDraught = GetInventoryItem("mana_draught");
+        var healingDraught = GetInventoryItem("healing_draught");
         var sharpeningOil = GetInventoryItem("sharpening_oil");
 
         var hpQty = Math.Max(0, healthPotion?.Quantity ?? 0);
-        var mpQty = Math.Max(0, manaDraught?.Quantity ?? 0);
+        var hdQty = Math.Max(0, healingDraught?.Quantity ?? 0);
         var oilQty = Math.Max(0, sharpeningOil?.Quantity ?? 0);
 
         if (hpQty < ConditionPurgeHealthPotionCost ||
-            mpQty < ConditionPurgeManaDraughtCost ||
+            hdQty < ConditionPurgeHealingDraughtCost ||
             oilQty < ConditionPurgeSharpeningOilCost)
         {
             reason = $"Need {GetConditionPurgeCostLabel()}.";
@@ -704,7 +868,7 @@ public sealed class Game : IDisposable
         }
 
         healthPotion!.Quantity -= ConditionPurgeHealthPotionCost;
-        manaDraught!.Quantity -= ConditionPurgeManaDraughtCost;
+        healingDraught!.Quantity -= ConditionPurgeHealingDraughtCost;
         sharpeningOil!.Quantity -= ConditionPurgeSharpeningOilCost;
         return true;
     }
@@ -745,9 +909,9 @@ public sealed class Game : IDisposable
             },
             new InventoryItem
             {
-                Id = "mana_draught",
-                Name = "Mana Draught",
-                Description = "Restore 35% MP.",
+                Id = "healing_draught",
+                Name = "Healing Draught",
+                Description = "Restore 35% HP.",
                 Kind = InventoryItemKind.Consumable,
                 Slot = null,
                 Quantity = 2
@@ -765,7 +929,7 @@ public sealed class Game : IDisposable
             {
                 Id = "leather_jerkin",
                 Name = "Leather Jerkin",
-                Description = "Armor slot (Light): +1 defense while equipped.",
+                Description = "Light armor: +1 defense, +2% flee while equipped. Requires Light armor training.",
                 Kind = InventoryItemKind.Equipment,
                 Slot = EquipmentSlot.Armor,
                 Quantity = 1
@@ -774,7 +938,7 @@ public sealed class Game : IDisposable
             {
                 Id = "brigandine_coat",
                 Name = "Brigandine Coat",
-                Description = "Armor slot (Medium): +2 defense while equipped.",
+                Description = "Medium armor: +2 defense while equipped. Requires Medium armor training.",
                 Kind = InventoryItemKind.Equipment,
                 Slot = EquipmentSlot.Armor,
                 Quantity = 0
@@ -783,7 +947,7 @@ public sealed class Game : IDisposable
             {
                 Id = "plate_harness",
                 Name = "Plate Harness",
-                Description = "Armor slot (Heavy): +3 defense while equipped.",
+                Description = "Heavy armor: +3 defense while equipped. Requires Heavy armor training.",
                 Kind = InventoryItemKind.Equipment,
                 Slot = EquipmentSlot.Armor,
                 Quantity = 0
@@ -841,6 +1005,49 @@ public sealed class Game : IDisposable
                 Kind = InventoryItemKind.Equipment,
                 Slot = EquipmentSlot.Ring,
                 Quantity = 1
+            },
+            new InventoryItem
+            {
+                Id = "iron_greaves",
+                Name = "Iron Greaves",
+                Description = "Boots slot: +1 defense while equipped.",
+                Kind = InventoryItemKind.Equipment,
+                Slot = EquipmentSlot.Boots,
+                Quantity = 0
+            },
+            new InventoryItem
+            {
+                Id = "thieves_gloves",
+                Name = "Thieves' Gloves",
+                Description = "Gloves slot: +1 melee damage while equipped.",
+                Kind = InventoryItemKind.Equipment,
+                Slot = EquipmentSlot.Gloves,
+                Quantity = 0
+            },
+            new InventoryItem
+            {
+                Id = "serpent_bracers",
+                Name = "Serpent Bracers",
+                Description = "Bracers slot: +1 spell damage while equipped.",
+                Kind = InventoryItemKind.Equipment,
+                Slot = EquipmentSlot.Bracers,
+                Quantity = 0
+            },
+            new InventoryItem
+            {
+                Id = "antidote_vial",
+                Name = "Antidote Vial",
+                Description = "Consumable: Cures the Poisoned condition.",
+                Kind = InventoryItemKind.Consumable,
+                Quantity = 1
+            },
+            new InventoryItem
+            {
+                Id = "smoke_bomb",
+                Name = "Smoke Bomb",
+                Description = "Consumable buff: +15% flee chance for this run.",
+                Kind = InventoryItemKind.Consumable,
+                Quantity = 0
             }
         });
     }
@@ -965,10 +1172,10 @@ public sealed class Game : IDisposable
         var current = GetCurrentArmorCategory();
         return current switch
         {
-            ArmorCategory.Light when player.HasFeat("light_armor_training_feat") => 1,
-            ArmorCategory.Medium when player.HasFeat("medium_armor_training_feat") => 2,
-            ArmorCategory.Heavy when player.HasFeat("heavy_armor_training_feat") => 3,
             ArmorCategory.Unarmored when player.HasFeat("unarmored_defense_feat") => 2,
+            ArmorCategory.Light when ArmorTraining.HasTrainingForCategory(player.CharacterClass.Name, player.HasFeat, ArmorCategory.Light) => 1,
+            ArmorCategory.Medium when ArmorTraining.HasTrainingForCategory(player.CharacterClass.Name, player.HasFeat, ArmorCategory.Medium) => 2,
+            ArmorCategory.Heavy when ArmorTraining.HasTrainingForCategory(player.CharacterClass.Name, player.HasFeat, ArmorCategory.Heavy) => 3,
             _ => 0
         };
     }
@@ -978,8 +1185,8 @@ public sealed class Game : IDisposable
         var current = GetCurrentArmorCategory();
         return current switch
         {
-            ArmorCategory.Light when player.HasFeat("light_armor_training_feat") => 2,
             ArmorCategory.Unarmored when player.HasFeat("unarmored_defense_feat") => 8,
+            ArmorCategory.Light when ArmorTraining.HasTrainingForCategory(player.CharacterClass.Name, player.HasFeat, ArmorCategory.Light) => 2,
             _ => 0
         };
     }
@@ -1136,6 +1343,7 @@ public sealed class Game : IDisposable
     private const double MovementRepeatIntervalSeconds = 0.09;
     private const double LootPickupHoldSeconds = 0.75;
     private const double PickupStatusVisibleSeconds = 2.4;
+    private static readonly bool EnableRunMetaLayer = false;
     private const int MilestoneRewardInterval = 2;
     private const int MaxEffectiveDoctrineRank = 3;
     private const int BloodwakeBaseHeal = 3;
@@ -1149,7 +1357,7 @@ public sealed class Game : IDisposable
     private const int ExecutionDoctrineBaseHeal = 2;
     private const int ExecutionDoctrineHealPerRank = 2;
     private const int ExecutionDoctrineVanguardHealBonus = 2;
-    private const int ExecutionDoctrineArcanistManaPerRank = 1;
+
     private const int GoblinPackJoinDistanceTiles = 2;
     private const int GoblinPackMaxEncounterSize = 3;
     private const int EncounterReinforcementJoinDistanceTiles = 2;
@@ -1163,7 +1371,7 @@ public sealed class Game : IDisposable
     private const string Phase3RouteForkNodeId = "phase3_route_fork";
     private const string Phase3RiskEventNodeId = "phase3_risk_event";
     private const int ConditionPurgeHealthPotionCost = 2;
-    private const int ConditionPurgeManaDraughtCost = 2;
+    private const int ConditionPurgeHealingDraughtCost = 2;
     private const int ConditionPurgeSharpeningOilCost = 1;
 
     private static readonly string[] RewardOptionNames =
@@ -1302,9 +1510,9 @@ public sealed class Game : IDisposable
         },
         new()
         {
-            Name = "Dusty Mana Vial",
+            Name = "Healing Draught",
             Rarity = LootRarity.Common,
-            InventoryItemId = "mana_draught",
+            InventoryItemId = "healing_draught",
             MinItemQuantity = 1,
             MaxItemQuantity = 1
         },
@@ -1379,6 +1587,54 @@ public sealed class Game : IDisposable
             InventoryItemId = "guard_ring",
             MinItemQuantity = 1,
             MaxItemQuantity = 1
+        },
+        new()
+        {
+            Name = "Plate Harness",
+            Rarity = LootRarity.Rare,
+            InventoryItemId = "plate_harness",
+            MinItemQuantity = 1,
+            MaxItemQuantity = 1
+        },
+        new()
+        {
+            Name = "Dented Iron Greaves",
+            Rarity = LootRarity.Uncommon,
+            InventoryItemId = "iron_greaves",
+            MinItemQuantity = 1,
+            MaxItemQuantity = 1
+        },
+        new()
+        {
+            Name = "Thieves' Gloves",
+            Rarity = LootRarity.Uncommon,
+            InventoryItemId = "thieves_gloves",
+            MinItemQuantity = 1,
+            MaxItemQuantity = 1
+        },
+        new()
+        {
+            Name = "Antidote Vial",
+            Rarity = LootRarity.Uncommon,
+            InventoryItemId = "antidote_vial",
+            MinItemQuantity = 1,
+            MaxItemQuantity = 2
+        },
+        new()
+        {
+            Name = "Smoke Bomb",
+            Rarity = LootRarity.Uncommon,
+            InventoryItemId = "smoke_bomb",
+            MinItemQuantity = 1,
+            MaxItemQuantity = 1
+        },
+        new()
+        {
+            Name = "Serpent Bracers",
+            Rarity = LootRarity.Rare,
+            InventoryItemId = "serpent_bracers",
+            MinItemQuantity = 1,
+            MaxItemQuantity = 1
         }
     };
 
@@ -1407,6 +1663,7 @@ public sealed class Game : IDisposable
     private static Color ColSelectBg = new(74, 102, 146, 210);
     private static Color ColSelectBgSoft = new(56, 80, 118, 190);
     private static Color ColFooter = new(12, 16, 26, 230);
+    private static Color ColCyan = new(80, 220, 230, 255);
 
     private void ApplyAccessibilityPalette()
     {
@@ -1499,9 +1756,19 @@ public sealed class Game : IDisposable
         public const int HelpPanelWidth = 508;
         public const int HelpPanelHeight = 388;
 
-        public const int HudHeight = 72;
+        public static int HudHeight
+        {
+            get
+            {
+                var y1 = UiScale(7);
+                var y2 = y1 + UiLineH(18);
+                var y3 = y2 + UiLineH(20);
+                var y4 = y3 + UiLineH(16);
+                return y4 + UiLineH(14) + UiScale(6);
+            }
+        }
         public const int HudPadding = 10;
-        public const int RewardBannerY = 74;
+        public static int RewardBannerY => HudHeight + 2;
         public const int RewardBannerHeight = 36;
 
         public const int CombatOverlayInset = 44;
@@ -1593,6 +1860,11 @@ public sealed class Game : IDisposable
                 DrawCombatUi();
                 DrawCombatSpellMenu();
                 break;
+            case GameState.CombatFormSelection:
+                DrawWorld();
+                DrawCombatUi();
+                DrawFormSelectionUi();
+                break;
             case GameState.CombatSpellTargeting:
                 DrawWorld();
                 DrawCombatUi();
@@ -1644,11 +1916,14 @@ public sealed class Game : IDisposable
     {
         var playerInfo = _player == null
             ? "Player=<null>"
-            : $"Player={_player.Name} Lv{_player.Level} HP={_player.CurrentHp}/{_player.MaxHp} MP={_player.CurrentMana}/{_player.MaxMana}";
+            : $"Player={_player.Name} Lv{_player.Level} HP={_player.CurrentHp}/{_player.MaxHp}";
         var enemyInfo = _currentEnemy == null
             ? "CurrentEnemy=<null>"
             : $"CurrentEnemy={_currentEnemy.Type.Name} HP={_currentEnemy.CurrentHp}/{_currentEnemy.Type.MaxHp}";
-        return $"State={_gameState} PausedFrom={_pausedFromState} Archetype={GetRunArchetypeLabel(_runArchetype)} Relic={GetRunRelicLabel(_runRelic)} Route={GetPhase3RouteLabel(_phase3RouteChoice)} Zone={GetFloorZoneLabel(_currentFloorZone)} P3Kills={_phase3EnemiesDefeated}/{Phase3SanctumUnlockRequiredKills} P3Rewards={GetClaimedPrimaryRewardCount()}/{Phase3SanctumUnlockRequiredRewardNodes} Milestones={GetMilestoneRanksLabel()} CondMode={(_settingsOptionalConditionsEnabled ? "On" : "Off")} Cond={GetActiveMajorConditionSummary()} EnemiesAlive={_enemies.Count(e => e.IsAlive)} EncActive={_encounterActive} EncSize={_encounterEnemies.Count} EncRound={_encounterRound} EncRem={_packEnemiesRemainingAfterCurrent} EncTurn={_encounterTurnIndex}/{Math.Max(0, _encounterTurnOrder.Count - 1)} EncCurrent={_encounterCurrentCombatantId} MoveMode={_combatMoveModeActive} MovePts={_combatMovePointsRemaining}/{_combatMovePointsMax} SpritesReady={_spriteLibrary.IsReady} PlayerSprite={_selectedPlayerSpriteId} {playerInfo} {enemyInfo}";
+        var runLayerSummary = EnableRunMetaLayer
+            ? $" Archetype={GetRunArchetypeLabel(_runArchetype)} Relic={GetRunRelicLabel(_runRelic)} Route={GetPhase3RouteLabel(_phase3RouteChoice)} P3Kills={_phase3EnemiesDefeated}/{Phase3SanctumUnlockRequiredKills} P3Rewards={GetClaimedPrimaryRewardCount()}/{Phase3SanctumUnlockRequiredRewardNodes} Milestones={GetMilestoneRanksLabel()}"
+            : string.Empty;
+        return $"State={_gameState} PausedFrom={_pausedFromState}{runLayerSummary} Zone={GetFloorZoneLabel(_currentFloorZone)} CondMode={(_settingsOptionalConditionsEnabled ? "On" : "Off")} Cond={GetActiveMajorConditionSummary()} EnemiesAlive={_enemies.Count(e => e.IsAlive)} EncActive={_encounterActive} EncSize={_encounterEnemies.Count} EncRound={_encounterRound} EncRem={_packEnemiesRemainingAfterCurrent} EncTurn={_encounterTurnIndex}/{Math.Max(0, _encounterTurnOrder.Count - 1)} EncCurrent={_encounterCurrentCombatantId} MoveMode={_combatMoveModeActive} MovePts={_combatMovePointsRemaining}/{_combatMovePointsMax} SpritesReady={_spriteLibrary.IsReady} PlayerSprite={_selectedPlayerSpriteId} {playerInfo} {enemyInfo}";
     }
 
     private static string GetRunArchetypeLabel(RunArchetype archetype)
@@ -1687,9 +1962,9 @@ public sealed class Game : IDisposable
     {
         return zone switch
         {
-            FloorMacroZone.BranchingDepths => "Branching Depths",
-            FloorMacroZone.SanctumRing => "Sanctum Ring",
-            _ => "Entry Frontier"
+            FloorMacroZone.BranchingDepths => "Central Warrens",
+            FloorMacroZone.SanctumRing => "Boss Den",
+            _ => "Outer Warrens"
         };
     }
 
@@ -1716,12 +1991,22 @@ public sealed class Game : IDisposable
 
     private bool IsPhase3RouteChoiceActive()
     {
+        if (!EnableRunMetaLayer)
+        {
+            return false;
+        }
+
         return _activeRewardNode != null &&
                string.Equals(_activeRewardNode.Id, Phase3RouteForkNodeId, StringComparison.Ordinal);
     }
 
     private bool IsPhase3RiskEventActive()
     {
+        if (!EnableRunMetaLayer)
+        {
+            return false;
+        }
+
         return _activeRewardNode != null &&
                string.Equals(_activeRewardNode.Id, Phase3RiskEventNodeId, StringComparison.Ordinal);
     }
@@ -1754,6 +2039,26 @@ public sealed class Game : IDisposable
 
     private string GetPhase3ObjectiveLabel()
     {
+        if (!EnableRunMetaLayer)
+        {
+            if (_floorCleared)
+            {
+                return "Objective: floor cleared.";
+            }
+
+            if (!_phase3SanctumWaveSpawned)
+            {
+                return "Objective: cut through the goblin warrens and push into the boss den.";
+            }
+
+            if (!_bossDefeated)
+            {
+                return "Objective: defeat the Goblin General.";
+            }
+
+            return "Objective: clear the last surviving goblins.";
+        }
+
         if (_phase3RouteChoice == Phase3RouteChoice.None)
         {
             return "Objective: reach the central fork (x30-x31, y12-y16) and choose your route.";
@@ -1871,6 +2176,11 @@ public sealed class Game : IDisposable
 
     private bool IsArchetypeChoiceActive()
     {
+        if (!EnableRunMetaLayer)
+        {
+            return false;
+        }
+
         return IsStandardRewardNodeActive() &&
                _runArchetype == RunArchetype.None &&
                GetClaimedPrimaryRewardCount() == 0;
@@ -1878,6 +2188,11 @@ public sealed class Game : IDisposable
 
     private bool IsRelicCheckpointActive()
     {
+        if (!EnableRunMetaLayer)
+        {
+            return false;
+        }
+
         return IsStandardRewardNodeActive() &&
                _runArchetype != RunArchetype.None &&
                _runRelic == RunRelic.None &&
@@ -1891,6 +2206,11 @@ public sealed class Game : IDisposable
 
     private bool IsMilestoneCheckpointActive()
     {
+        if (!EnableRunMetaLayer)
+        {
+            return false;
+        }
+
         return IsStandardRewardNodeActive() &&
                _runArchetype != RunArchetype.None &&
                _runRelic != RunRelic.None &&
@@ -2009,7 +2329,7 @@ public sealed class Game : IDisposable
         var combatEdgeDescription = _runArchetype switch
         {
             RunArchetype.Vanguard => "Vanguard edge: +1 melee and +1 defense.",
-            RunArchetype.Arcanist => "Arcanist edge: +1 spell damage and +1 mana refill burst.",
+            RunArchetype.Arcanist => "Arcanist edge: +1 spell damage and +1 HP on kill.",
             RunArchetype.Skirmisher => "Skirmisher edge: +1% crit, +3% flee, +1 melee.",
             _ => "Alternate buff: (+1 melee/+1 spell) or (+1 defense/+2% crit/+3% flee)."
         };
@@ -2085,15 +2405,12 @@ public sealed class Game : IDisposable
                 var firstBundle = GrantRewardSupplyLoot();
                 var secondBundle = GrantRewardSupplyLoot();
                 var hpGain = Math.Max(6, (int)Math.Ceiling(_player.MaxHp * 0.20));
-                var mpGain = Math.Max(4, (int)Math.Ceiling(_player.MaxMana * 0.20));
                 var beforeHp = _player.CurrentHp;
-                var beforeMp = _player.CurrentMana;
                 _player.CurrentHp = Math.Min(_player.MaxHp, _player.CurrentHp + hpGain);
-                _player.CurrentMana = Math.Min(_player.MaxMana, _player.CurrentMana + mpGain);
                 _runCritBonus = Math.Max(-20, _runCritBonus - 2);
                 _runFleeBonus = Math.Max(-25, _runFleeBonus - 4);
                 resultMessage =
-                    $"Cache stabilized: {firstBundle}, {secondBundle}, HP +{_player.CurrentHp - beforeHp}, MP +{_player.CurrentMana - beforeMp}, but crit -2% and flee -4%.";
+                    $"Cache stabilized: {firstBundle}, {secondBundle}, HP +{_player.CurrentHp - beforeHp}, but crit -2% and flee -4%.";
                 return;
             }
             default:
@@ -2215,8 +2532,8 @@ public sealed class Game : IDisposable
             case 1:
                 _runArchetype = RunArchetype.Arcanist;
                 _runSpellBonus += 2;
-                AddInventoryItemQuantity("mana_draught", 1);
-                resultMessage = "Archetype chosen: Arcanist. +2 spell damage, +1 Mana Draught.";
+                AddInventoryItemQuantity("healing_draught", 1);
+                resultMessage = "Archetype chosen: Arcanist. +2 spell damage, +1 Healing Draught.";
                 return;
             case 2:
                 _runArchetype = RunArchetype.Skirmisher;
@@ -2307,15 +2624,15 @@ public sealed class Game : IDisposable
             PushCombatLog($"Your HP {_player.CurrentHp}/{_player.MaxHp}.");
         }
 
-        if (_runArchetype == RunArchetype.Arcanist && _player.MaxMana > 0)
+        if (_runArchetype == RunArchetype.Arcanist)
         {
-            var manaGain = Math.Max(1, executionRank * ExecutionDoctrineArcanistManaPerRank);
-            var beforeMp = _player.CurrentMana;
-            _player.CurrentMana = Math.Min(_player.MaxMana, _player.CurrentMana + manaGain);
-            var mpGained = _player.CurrentMana - beforeMp;
-            if (mpGained > 0)
+            var arcHeal = Math.Max(1, executionRank);
+            var beforeArcHp = _player.CurrentHp;
+            _player.CurrentHp = Math.Min(_player.MaxHp, _player.CurrentHp + arcHeal);
+            var arcHpGained = _player.CurrentHp - beforeArcHp;
+            if (arcHpGained > 0)
             {
-                PushCombatLog($"Execution Doctrine also restores {mpGained} MP.");
+                PushCombatLog($"Execution Doctrine also restores {arcHpGained} HP.");
             }
         }
     }
@@ -2535,7 +2852,8 @@ public sealed class Game : IDisposable
                     var chosenGender = Genders[_selectedGenderIndex];
                     var chosenRace = Races[_selectedRaceIndex];
                     _player = new Player(2, 2, chosenClass, _pendingName.Trim(), chosenGender, chosenRace);
-                    _creationPointsRemaining = 6;
+                    _equippedWeaponId = _player.CharacterClass.StartingWeaponId;
+                    _creationPointsRemaining = 25;
                     _creationSelectionIndex = 0;
                     _gameState = GameState.CharacterStatAllocation;
                 }
@@ -2559,6 +2877,9 @@ public sealed class Game : IDisposable
 
             case GameState.CombatSpellMenu:
                 HandleCombatSpellInput();
+                break;
+            case GameState.CombatFormSelection:
+                HandleFormSelectionInput();
                 break;
             case GameState.CombatSpellTargeting:
                 HandleCombatSpellTargetingInput();
@@ -2634,7 +2955,7 @@ public sealed class Game : IDisposable
         _selectedCreationFeatIndex = 0;
         _spellLearnMenuOffset = 0;
         _creationFeatMenuOffset = 0;
-        _creationMessage = "Use 1-6 or LEFT/RIGHT to move sections. A/D works outside Name field.";
+        _creationMessage = "Complete each section in order. A/D changes section and ESC goes back.";
         _startMenuMessage = string.Empty;
         _selectionMessage = string.Empty;
 
@@ -2642,6 +2963,7 @@ public sealed class Game : IDisposable
         _selectedGenderIndex = 0;
         _selectedRaceIndex = 0;
         _selectedClassIndex = 0;
+        _creationClassConfirmed = false;
         SetPlayerAppearanceBySpriteId(ResolveDefaultSpriteForRaceAndGender(Races[_selectedRaceIndex], Genders[_selectedGenderIndex]));
         Array.Clear(_creationAllocatedStats, 0, _creationAllocatedStats.Length);
         _creationStatAllocationOrder.Clear();
@@ -2649,7 +2971,7 @@ public sealed class Game : IDisposable
         _creationChosenSpellOrder.Clear();
         _creationChosenFeatIds.Clear();
         _creationChosenFeatOrder.Clear();
-        _creationPointsRemaining = 6;
+        _creationPointsRemaining = 25;
         _creationOriginCondition = CreationConditionPreset.None;
         _activeMajorConditions.Clear();
         _dungeonConditionEventsTriggered = 0;
@@ -2667,29 +2989,25 @@ public sealed class Game : IDisposable
         }
         else
         {
-            _creationStatAllocationOrder.RemoveAll(index => index < 0 || index >= StatOrder.Length);
-            if (_creationStatAllocationOrder.Count == 0 && _creationAllocatedStats.Any(points => points > 0))
+            // Order list encodes: entry 0..5 = raise stat[entry], entry 6..11 = lower stat[entry-6].
+            _creationStatAllocationOrder.RemoveAll(entry => entry < 0 || entry >= StatOrder.Length * 2);
+
+            // Reconstruct deltas from the order list.
+            var normalizedDeltas = new int[StatOrder.Length];
+            foreach (var entry in _creationStatAllocationOrder)
             {
-                for (var i = 0; i < StatOrder.Length; i++)
-                {
-                    var points = Math.Max(0, _creationAllocatedStats[i]);
-                    for (var p = 0; p < points; p++)
-                    {
-                        _creationStatAllocationOrder.Add(i);
-                    }
-                }
+                if (entry < StatOrder.Length)
+                    normalizedDeltas[entry]++;
+                else
+                    normalizedDeltas[entry - StatOrder.Length]--;
             }
 
-            var normalizedStats = new int[StatOrder.Length];
-            foreach (var index in _creationStatAllocationOrder)
-            {
-                normalizedStats[index] += 1;
-            }
+            // Clamp to valid creation range [-3, 10].
+            for (var i = 0; i < StatOrder.Length; i++)
+                normalizedDeltas[i] = Math.Clamp(normalizedDeltas[i], -3, 10);
 
-            if (!_creationAllocatedStats.SequenceEqual(normalizedStats))
-            {
-                Array.Copy(normalizedStats, _creationAllocatedStats, StatOrder.Length);
-            }
+            if (!_creationAllocatedStats.SequenceEqual(normalizedDeltas))
+                Array.Copy(normalizedDeltas, _creationAllocatedStats, StatOrder.Length);
         }
 
         if (!keepSpells)
@@ -2785,23 +3103,30 @@ public sealed class Game : IDisposable
         var chosenRace = Races[_selectedRaceIndex];
         var displayName = string.IsNullOrWhiteSpace(_pendingName) ? "Adventurer" : _pendingName.Trim();
         _player = new Player(2, 2, chosenClass, displayName, chosenGender, chosenRace);
+        _equippedWeaponId = _player.CharacterClass.StartingWeaponId;
         if (!IsValidPlayerSpriteId(_selectedPlayerSpriteId))
         {
             SetPlayerAppearanceBySpriteId(ResolveDefaultSpriteForRaceAndGender(chosenRace, chosenGender));
         }
 
-        var allocatedTotal = 0;
+        var spentPoints = 0;
         for (var i = 0; i < StatOrder.Length; i++)
         {
-            var points = Math.Max(0, _creationAllocatedStats[i]);
-            allocatedTotal += points;
-            for (var p = 0; p < points; p++)
+            var delta = _creationAllocatedStats[i];
+            if (delta > 0)
             {
-                _player.AllocateCreationStatPoint(StatOrder[i]);
+                for (var p = 0; p < delta; p++)
+                    _player.AllocateCreationStatPoint(StatOrder[i]);
             }
+            else if (delta < 0)
+            {
+                for (var p = 0; p < -delta; p++)
+                    _player.DeallocateCreationStatPoint(StatOrder[i]);
+            }
+            spentPoints += PointBuyCost(10 + delta);
         }
 
-        _creationPointsRemaining = Math.Max(0, 6 - allocatedTotal);
+        _creationPointsRemaining = 25 - spentPoints;
 
         if (keepSpells && _creationChosenSpellOrder.Count > 0)
         {
@@ -2888,7 +3213,13 @@ public sealed class Game : IDisposable
         _creationLearnableSpells.Clear();
         if (_player != null)
         {
-            _creationLearnableSpells.AddRange(_player.GetClassSpells());
+            var filtered = _player
+                .GetClassSpells()
+                .Where(spell => !(spell.IsCantrip && _player.KnowsSpell(spell.Id)))
+                .OrderBy(spell => spell.SpellLevel)
+                .ThenBy(spell => spell.Name, StringComparer.Ordinal)
+                .ToList();
+            _creationLearnableSpells.AddRange(filtered);
         }
 
         var menuCount = GetCreationSpellMenuCount();
@@ -2926,6 +3257,11 @@ public sealed class Game : IDisposable
         return !string.IsNullOrWhiteSpace(_pendingName);
     }
 
+    private bool IsCreationClassReady()
+    {
+        return _creationClassConfirmed;
+    }
+
     private bool IsCreationStatsReady()
     {
         return _creationPointsRemaining == 0;
@@ -2943,7 +3279,7 @@ public sealed class Game : IDisposable
 
     private bool IsCreationReady()
     {
-        return IsCreationNameReady() && IsCreationStatsReady() && IsCreationSpellsReady() && IsCreationFeatsReady();
+        return IsCreationNameReady() && IsCreationClassReady() && IsCreationStatsReady() && IsCreationSpellsReady() && IsCreationFeatsReady();
     }
 
     private bool IsCreationSectionReady(int sectionIndex)
@@ -2951,7 +3287,7 @@ public sealed class Game : IDisposable
         return sectionIndex switch
         {
             0 => IsCreationNameReady(),
-            1 => true,
+            1 => IsCreationClassReady(),
             2 => IsCreationStatsReady(),
             3 => IsCreationSpellsReady(),
             4 => IsCreationFeatsReady(),
@@ -2964,12 +3300,12 @@ public sealed class Game : IDisposable
     {
         return _creationSectionIndex switch
         {
-            0 => "Identity: set Name, Gender, Race, Appearance, and optional origin condition.",
-            1 => "Class: UP/DOWN browse classes. ENTER confirms and moves to Stats.",
-            2 => "Stats: spend all 6 points. ENTER adds to selected stat; use Undo/Reset rows as needed.",
-            3 => "Spells: browse class spell list. ENTER learns spells; use Undo/Reset rows if you change your mind.",
-            4 => "Feats: choose your starting feat. Locked feats show exact prerequisites.",
-            5 => "Review: all checks must be green before starting.",
+            0 => "Identity: type Name, set Gender/Race with LEFT/RIGHT, ENTER steps forward, ESC goes back.",
+            1 => "Class: UP/DOWN browse classes. ENTER confirms this class, ESC goes back.",
+            2 => "Stats: UP/DOWN choose row. RIGHT adds, LEFT removes. ENTER advances once all points are spent.",
+            3 => "Spells: ENTER learns/removes spells. When picks are done, creation auto-advances.",
+            4 => "Feats: choose your starting feat. ENTER selects; ESC moves back if you want to change earlier sections.",
+            5 => "Review: all checks must be green before starting. ENTER starts the run.",
             _ => "Character creation"
         };
     }
@@ -2985,31 +3321,46 @@ public sealed class Game : IDisposable
         return -1;
     }
 
-    private void HandleCharacterCreationHubInput()
+    private void MoveCreationToPreviousSection()
     {
-        if (Pressed(KeyEscape))
+        if (_creationSectionIndex <= 0)
         {
             ReturnToMainMenu();
             return;
         }
 
-        var hotkeySection = GetCreationSectionHotkey();
-        if (hotkeySection >= 0)
+        _creationSectionIndex -= 1;
+        _creationMessage = $"Back to {CreationSections[_creationSectionIndex]}.";
+    }
+
+    private void AdvanceCreationToNextSection(string message)
+    {
+        var nextSection = Math.Min(_creationSectionIndex + 1, CreationSections.Length - 1);
+        while (nextSection < CreationSections.Length - 1 && IsCreationSectionReady(nextSection))
         {
-            _creationSectionIndex = hotkeySection;
-            _creationMessage = $"Moved to {CreationSections[_creationSectionIndex]} (hotkey {hotkeySection + 1}).";
+            nextSection += 1;
+        }
+
+        _creationSectionIndex = nextSection;
+        _creationMessage = message;
+    }
+
+    private void HandleCharacterCreationHubInput()
+    {
+        if (Pressed(KeyEscape))
+        {
+            MoveCreationToPreviousSection();
             return;
         }
 
         var isTypingNameField = _creationSectionIndex == 0 && _selectedCreationIdentityIndex == 0;
-
-        if (Pressed(KeyLeft) || (!isTypingNameField && Pressed(KeyA)))
+        if (!isTypingNameField && PressedOrRepeat(KeyA))
         {
             _creationSectionIndex = (_creationSectionIndex - 1 + CreationSections.Length) % CreationSections.Length;
             return;
         }
 
-        if (Pressed(KeyRight) || (!isTypingNameField && Pressed(KeyD)))
+        if (!isTypingNameField && PressedOrRepeat(KeyD))
         {
             _creationSectionIndex = (_creationSectionIndex + 1) % CreationSections.Length;
             return;
@@ -3040,14 +3391,16 @@ public sealed class Game : IDisposable
 
     private void HandleCreationIdentityInput()
     {
-        const int identityFieldCount = 5;
-        if (Pressed(KeyUp))
+        const int identityFieldCount = 3;
+        _selectedCreationIdentityIndex = Math.Clamp(_selectedCreationIdentityIndex, 0, identityFieldCount - 1);
+
+        if (PressedOrRepeat(KeyUp))
         {
             _selectedCreationIdentityIndex = (_selectedCreationIdentityIndex - 1 + identityFieldCount) % identityFieldCount;
             return;
         }
 
-        if (Pressed(KeyDown))
+        if (PressedOrRepeat(KeyDown))
         {
             _selectedCreationIdentityIndex = (_selectedCreationIdentityIndex + 1) % identityFieldCount;
             return;
@@ -3074,7 +3427,15 @@ public sealed class Game : IDisposable
 
             if (Pressed(KeyEnter))
             {
-                _selectedCreationIdentityIndex = 1;
+                if (IsCreationNameReady())
+                {
+                    _selectedCreationIdentityIndex = 1;
+                    _creationMessage = "Name set. Choose Gender next.";
+                }
+                else
+                {
+                    _creationMessage = "Enter a name before moving on.";
+                }
             }
 
             return;
@@ -3082,7 +3443,7 @@ public sealed class Game : IDisposable
 
         if (_selectedCreationIdentityIndex == 1)
         {
-            if (Pressed(KeyLeft))
+            if (PressedOrRepeat(KeyLeft))
             {
                 _selectedGenderIndex = (_selectedGenderIndex - 1 + Genders.Length) % Genders.Length;
                 SetPlayerAppearanceBySpriteId(ResolveDefaultSpriteForRaceAndGender(Races[_selectedRaceIndex], Genders[_selectedGenderIndex]));
@@ -3090,11 +3451,18 @@ public sealed class Game : IDisposable
                 return;
             }
 
-            if (Pressed(KeyRight) || Pressed(KeyEnter))
+            if (PressedOrRepeat(KeyRight))
             {
                 _selectedGenderIndex = (_selectedGenderIndex + 1) % Genders.Length;
                 SetPlayerAppearanceBySpriteId(ResolveDefaultSpriteForRaceAndGender(Races[_selectedRaceIndex], Genders[_selectedGenderIndex]));
                 RebuildCreationPlayer(keepStats: true, keepSpells: true, keepFeats: true);
+                return;
+            }
+
+            if (Pressed(KeyEnter))
+            {
+                _selectedCreationIdentityIndex = 2;
+                _creationMessage = "Gender set. Choose Race next.";
             }
 
             return;
@@ -3102,7 +3470,7 @@ public sealed class Game : IDisposable
 
         if (_selectedCreationIdentityIndex == 2)
         {
-            if (Pressed(KeyLeft))
+            if (PressedOrRepeat(KeyLeft))
             {
                 _selectedRaceIndex = (_selectedRaceIndex - 1 + Races.Length) % Races.Length;
                 SetPlayerAppearanceBySpriteId(ResolveDefaultSpriteForRaceAndGender(Races[_selectedRaceIndex], Genders[_selectedGenderIndex]));
@@ -3110,44 +3478,20 @@ public sealed class Game : IDisposable
                 return;
             }
 
-            if (Pressed(KeyRight) || Pressed(KeyEnter))
+            if (PressedOrRepeat(KeyRight))
             {
                 _selectedRaceIndex = (_selectedRaceIndex + 1) % Races.Length;
                 SetPlayerAppearanceBySpriteId(ResolveDefaultSpriteForRaceAndGender(Races[_selectedRaceIndex], Genders[_selectedGenderIndex]));
                 RebuildCreationPlayer(keepStats: true, keepSpells: true, keepFeats: true);
-            }
-
-            return;
-        }
-
-        if (_selectedCreationIdentityIndex == 3)
-        {
-            if (Pressed(KeyLeft))
-            {
-                CyclePlayerAppearance(-1);
                 return;
             }
 
-            if (Pressed(KeyRight) || Pressed(KeyEnter))
+            if (Pressed(KeyEnter))
             {
-                CyclePlayerAppearance(1);
+                AdvanceCreationToNextSection("Identity locked. Choose a class.");
             }
 
             return;
-        }
-
-        if (Pressed(KeyLeft))
-        {
-            _selectedCreationConditionIndex =
-                (_selectedCreationConditionIndex - 1 + CreationConditionOptions.Length) % CreationConditionOptions.Length;
-            _creationMessage = $"Origin condition: {CreationConditionOptions[_selectedCreationConditionIndex].Label}.";
-            return;
-        }
-
-        if (Pressed(KeyRight) || Pressed(KeyEnter))
-        {
-            _selectedCreationConditionIndex = (_selectedCreationConditionIndex + 1) % CreationConditionOptions.Length;
-            _creationMessage = $"Origin condition: {CreationConditionOptions[_selectedCreationConditionIndex].Label}.";
         }
     }
 
@@ -3207,13 +3551,13 @@ public sealed class Game : IDisposable
 
     private void HandleCreationClassInput()
     {
-        if (Pressed(KeyUp))
+        if (PressedOrRepeat(KeyUp))
         {
             ChangeCreationClass(-1);
             return;
         }
 
-        if (Pressed(KeyDown))
+        if (PressedOrRepeat(KeyDown))
         {
             ChangeCreationClass(1);
             return;
@@ -3221,8 +3565,8 @@ public sealed class Game : IDisposable
 
         if (Pressed(KeyEnter))
         {
-            _creationSectionIndex = 2;
-            _creationMessage = "Class confirmed. Allocate your 6 stat points.";
+            _creationClassConfirmed = true;
+            AdvanceCreationToNextSection("Class confirmed. Allocate your 6 stat points.");
         }
     }
 
@@ -3232,76 +3576,136 @@ public sealed class Game : IDisposable
         if (next == _selectedClassIndex) return;
 
         _selectedClassIndex = next;
+        _creationClassConfirmed = false;
         RebuildCreationPlayer(keepStats: false, keepSpells: false, keepFeats: true);
         _creationSelectionIndex = 0;
         _selectedSpellLearnIndex = 0;
-        _creationMessage = "Class changed: stat/spell setup reset and starting feat revalidated.";
+        _creationMessage = "Class changed: stat/spell setup reset and starting feat revalidated. Press ENTER to confirm this class.";
     }
 
     private void HandleCreationStatsInput()
     {
         var undoIndex = StatOrder.Length;
         var menuCount = StatOrder.Length + 2;
-        if (Pressed(KeyUp))
+        if (PressedOrRepeat(KeyUp))
         {
             _creationSelectionIndex = (_creationSelectionIndex - 1 + menuCount) % menuCount;
             return;
         }
 
-        if (Pressed(KeyDown))
+        if (PressedOrRepeat(KeyDown))
         {
             _creationSelectionIndex = (_creationSelectionIndex + 1) % menuCount;
             return;
         }
 
-        if (!Pressed(KeyEnter)) return;
-
         if (_creationSelectionIndex < StatOrder.Length)
         {
-            if (_player == null || _creationPointsRemaining <= 0)
+            var stat = StatOrder[_creationSelectionIndex];
+            var curDelta = _creationAllocatedStats[_creationSelectionIndex];
+            var boughtScore = 10 + curDelta;
+
+            if (PressedOrRepeat(KeyRight))
             {
-                _creationMessage = "No stat points left. Move to Spells/Feats/Review or reset stats.";
+                if (_player == null) return;
+                if (boughtScore >= 20)
+                {
+                    _creationMessage = $"{stat} is already at the creation maximum (20).";
+                    return;
+                }
+                var costToRaise = PointBuyCostToRaise(boughtScore);
+                if (costToRaise > _creationPointsRemaining)
+                {
+                    _creationMessage = $"Not enough points to raise {stat} (costs {costToRaise}, have {_creationPointsRemaining}).";
+                    return;
+                }
+                _player.AllocateCreationStatPoint(stat);
+                _creationAllocatedStats[_creationSelectionIndex]++;
+                _creationStatAllocationOrder.Add(_creationSelectionIndex);
+                _creationPointsRemaining -= costToRaise;
+                var newValAfterRaise = _player.Stats.Get(stat);
+                _creationMessage = _creationPointsRemaining == 0
+                    ? $"{stat} raised to {newValAfterRaise}. All 25 points spent."
+                    : $"{stat} raised to {newValAfterRaise}. {_creationPointsRemaining} points left.";
                 return;
             }
 
-            var stat = StatOrder[_creationSelectionIndex];
-            _player.AllocateCreationStatPoint(stat);
-            _creationAllocatedStats[_creationSelectionIndex] += 1;
-            _creationStatAllocationOrder.Add(_creationSelectionIndex);
-            _creationPointsRemaining -= 1;
-            _creationMessage = _creationPointsRemaining == 0
-                ? "All stat points allocated. Move to Spells, Feats, or Review."
-                : $"{stat} increased. {_creationPointsRemaining} points left.";
+            if (PressedOrRepeat(KeyLeft))
+            {
+                if (_player == null) return;
+                if (boughtScore <= 7)
+                {
+                    _creationMessage = $"{stat} is already at the minimum (7).";
+                    return;
+                }
+                var refund = PointBuyCostToLower(boughtScore);
+                _player.DeallocateCreationStatPoint(stat);
+                _creationAllocatedStats[_creationSelectionIndex]--;
+                _creationStatAllocationOrder.Add(_creationSelectionIndex + StatOrder.Length);
+                _creationPointsRemaining += refund;
+                var newValAfterLower = _player.Stats.Get(stat);
+                _creationMessage = $"{stat} lowered to {newValAfterLower}. {_creationPointsRemaining} points left.";
+                return;
+            }
+
+            if (Pressed(KeyEnter))
+            {
+                if (_creationPointsRemaining == 0)
+                    AdvanceCreationToNextSection("Stats complete. Move on to spells.");
+                else
+                    _creationMessage = $"Use RIGHT to raise and LEFT to lower. {_creationPointsRemaining} points remaining.";
+                return;
+            }
+
             return;
         }
+
+        if (!Pressed(KeyEnter)) return;
 
         if (_creationSelectionIndex == undoIndex)
         {
             if (_creationStatAllocationOrder.Count == 0)
             {
-                _creationMessage = "No stat points allocated yet to undo.";
+                _creationMessage = "No stat allocations to undo.";
                 return;
             }
 
-            var lastIndex = _creationStatAllocationOrder[^1];
+            var lastEntry = _creationStatAllocationOrder[^1];
             _creationStatAllocationOrder.RemoveAt(_creationStatAllocationOrder.Count - 1);
-            if (lastIndex < 0 || lastIndex >= StatOrder.Length || _creationAllocatedStats[lastIndex] <= 0)
+
+            int undoStatIdx;
+            bool undoWasRaise;
+            if (lastEntry >= 0 && lastEntry < StatOrder.Length)
+            {
+                undoStatIdx = lastEntry;
+                undoWasRaise = true;
+            }
+            else if (lastEntry >= StatOrder.Length && lastEntry < StatOrder.Length * 2)
+            {
+                undoStatIdx = lastEntry - StatOrder.Length;
+                undoWasRaise = false;
+            }
+            else
             {
                 RebuildCreationPlayer(keepStats: true, keepSpells: true, keepFeats: true);
-                _creationMessage = "Last stat pick could not be resolved; allocation rebuilt.";
+                _creationMessage = "Last allocation could not be resolved; rebuilt.";
                 return;
             }
 
-            _creationAllocatedStats[lastIndex] -= 1;
+            if (undoWasRaise)
+                _creationAllocatedStats[undoStatIdx]--;
+            else
+                _creationAllocatedStats[undoStatIdx]++;
+
             RebuildCreationPlayer(keepStats: true, keepSpells: true, keepFeats: true);
-            _creationSelectionIndex = lastIndex;
-            _creationMessage = $"{StatOrder[lastIndex]} undo applied. {_creationPointsRemaining} points left.";
+            _creationSelectionIndex = undoStatIdx;
+            _creationMessage = $"{StatOrder[undoStatIdx]} undo applied. {_creationPointsRemaining} points left.";
             return;
         }
 
-        if (_creationAllocatedStats.All(points => points == 0))
+        if (_creationAllocatedStats.All(delta => delta == 0))
         {
-            _creationMessage = "No allocated stats to reset.";
+            _creationMessage = "Stats are already at baseline (all 10).";
             return;
         }
 
@@ -3309,7 +3713,7 @@ public sealed class Game : IDisposable
         _creationStatAllocationOrder.Clear();
         RebuildCreationPlayer(keepStats: false, keepSpells: true, keepFeats: true);
         _creationSelectionIndex = 0;
-        _creationMessage = "Stat allocation reset.";
+        _creationMessage = $"Stats reset to baseline. {_creationPointsRemaining} points available.";
     }
 
     private void HandleCreationSpellsInput()
@@ -3320,7 +3724,7 @@ public sealed class Game : IDisposable
         var resetIndex = GetCreationSpellResetRowIndex();
         var menuCount = GetCreationSpellMenuCount();
 
-        if (Pressed(KeyUp))
+        if (PressedOrRepeat(KeyUp))
         {
             if (menuCount > 0)
             {
@@ -3330,7 +3734,7 @@ public sealed class Game : IDisposable
             return;
         }
 
-        if (Pressed(KeyDown))
+        if (PressedOrRepeat(KeyDown))
         {
             if (menuCount > 0)
             {
@@ -3343,9 +3747,16 @@ public sealed class Game : IDisposable
         if (!Pressed(KeyEnter)) return;
         if (menuCount == 0)
         {
-            _creationMessage = _player.IsCasterClass
-                ? "No class spells available for this level band."
-                : "This class has no spell list in the current prototype scope.";
+            if (IsCreationSpellsReady())
+            {
+                AdvanceCreationToNextSection("No spell picks remain. Move on to feats.");
+            }
+            else
+            {
+                _creationMessage = _player.IsCasterClass
+                    ? "No class spells available for this level band."
+                    : "This class has no spell list in the current 1-6 scope.";
+            }
             return;
         }
 
@@ -3440,9 +3851,14 @@ public sealed class Game : IDisposable
             }
 
             RefreshCreationLearnableSpells();
-            _creationMessage = _player.SpellPickPoints == 0
-                ? $"{spell.Name} learned. Spell picks complete."
-                : $"{spell.Name} learned. {_player.SpellPickPoints} picks left.";
+            if (_player.SpellPickPoints == 0)
+            {
+                AdvanceCreationToNextSection($"{spell.Name} learned. Spell picks complete.");
+            }
+            else
+            {
+                _creationMessage = $"{spell.Name} learned. {_player.SpellPickPoints} picks left.";
+            }
         }
         else
         {
@@ -3455,7 +3871,7 @@ public sealed class Game : IDisposable
         if (_player == null) return;
 
         var menuCount = _creationFeatChoices.Count;
-        if (Pressed(KeyUp))
+        if (PressedOrRepeat(KeyUp))
         {
             if (menuCount > 0)
             {
@@ -3465,7 +3881,7 @@ public sealed class Game : IDisposable
             return;
         }
 
-        if (Pressed(KeyDown))
+        if (PressedOrRepeat(KeyDown))
         {
             if (menuCount > 0)
             {
@@ -3509,9 +3925,14 @@ public sealed class Game : IDisposable
         _creationChosenFeatIds.Add(feat.Id);
         _creationChosenFeatOrder.Add(feat.Id);
         RebuildCreationPlayer(keepStats: true, keepSpells: true, keepFeats: true);
-        _creationMessage = _player.FeatPoints == 0
-            ? $"{feat.Name} selected as your starting feat."
-            : $"{feat.Name} selected. {_player.FeatPoints} feat picks left.";
+        if (_player.FeatPoints == 0)
+        {
+            AdvanceCreationToNextSection($"{feat.Name} selected as your starting feat.");
+        }
+        else
+        {
+            _creationMessage = $"{feat.Name} selected. {_player.FeatPoints} feat picks left.";
+        }
     }
 
     private void HandleCreationReviewInput()
@@ -3526,7 +3947,13 @@ public sealed class Game : IDisposable
 
         if (!IsCreationStatsReady())
         {
-            _creationMessage = "Spend all 6 stat points before starting.";
+            _creationMessage = "Spend all 25 build points before starting.";
+            return;
+        }
+
+        if (!IsCreationClassReady())
+        {
+            _creationMessage = "Confirm your class before starting.";
             return;
         }
 
@@ -3609,10 +4036,15 @@ public sealed class Game : IDisposable
 
         if (_creationSelectionIndex < StatOrder.Length)
         {
-            if (_creationPointsRemaining <= 0) return;
-
+            var delta = _creationAllocatedStats[_creationSelectionIndex];
+            var boughtScore = 10 + delta;
+            if (boughtScore >= 20 || _creationPointsRemaining <= 0) return;
+            var cost = PointBuyCostToRaise(boughtScore);
+            if (cost > _creationPointsRemaining) return;
             _player.AllocateCreationStatPoint(StatOrder[_creationSelectionIndex]);
-            _creationPointsRemaining -= 1;
+            _creationAllocatedStats[_creationSelectionIndex]++;
+            _creationStatAllocationOrder.Add(_creationSelectionIndex);
+            _creationPointsRemaining -= cost;
             return;
         }
 
@@ -3637,6 +4069,7 @@ public sealed class Game : IDisposable
         _selectedGenderIndex = 0;
         _selectedRaceIndex = 0;
         _selectedClassIndex = 0;
+        _creationClassConfirmed = false;
         _selectedAppearanceIndex = 0;
         _selectedCreationConditionIndex = 0;
         _selectedPlayerSpriteId = "knight_m";
@@ -3650,6 +4083,7 @@ public sealed class Game : IDisposable
         _selectedCombatSkillIndex = 0;
         _selectedSpellIndex = 0;
         _selectedCombatItemIndex = 0;
+        _combatSkillMenuOffset = 0;
         _skillMenuOffset = 0;
         _spellMenuOffset = 0;
         _combatItemMenuOffset = 0;
@@ -3659,7 +4093,7 @@ public sealed class Game : IDisposable
         _characterSheetScroll = 0;
         _creationSectionIndex = 0;
         _creationSelectionIndex = 0;
-        _creationPointsRemaining = 6;
+        _creationPointsRemaining = 25;
         _pauseMenuIndex = 0;
         _pauseMenuView = PauseMenuView.Root;
         _startMenuMessage = string.Empty;
@@ -3694,7 +4128,6 @@ public sealed class Game : IDisposable
         _groundLoot.Clear();
         Array.Clear(_creationAllocatedStats, 0, _creationAllocatedStats.Length);
         _combatLog.Clear();
-        _enemyPoisoned = 0;
         _warCryAvailable = false;
         ResetEncounterContext();
         _resolvingEnemyDeath = false;
@@ -3727,6 +4160,45 @@ public sealed class Game : IDisposable
         _runDefenseBonus = 0;
         _runCritBonus = 0;
         _runFleeBonus = 0;
+        _mageArmorActive = false;
+        _aidMaxHpBonus = 0;
+        _playerTempHp = 0;
+        _shieldSpellActive = false;
+        _shieldSpellTurnsLeft = 0;
+        // Batch 2 new game reset
+        _mirrorImageCharges = 0;
+        _absorbElementsCharged = false;
+        _expeditiousRetreatActive = false;
+        _longstriderActive = false;
+        _hexActive = false;
+        _protFromEvilActive = false;
+        _sanctuaryActive = false;
+        _compelledDuelActive = false;
+        _enhanceAbilityActive = false;
+        // Batch 3 new game reset
+        _hellishRebukePrimed = false;
+        _armorOfAgathysTempHp = 0;
+        _fireShieldActive = false;
+        _wrathOfStormPrimed = false;
+        _spiritShroudActive = false;
+        _deathWardActive = false;
+        _holyRebukePrimed = false;
+        _thornsActive = false;
+        _stoneskinActive = false;
+        _cuttingWordsPrimed = false;
+        _greaterInvisibilityActive = false;
+        // Batch 4+5 new game reset
+        _counterspellPrimed = false;
+        _invisibilityActive = false;
+        _elementalWeaponActive = false;
+        _elementalWeaponElement = string.Empty;
+        _revivifyUsed = false;
+        _blinkActive = false;
+        _protEnergyActive = false;
+        _protEnergyElement = string.Empty;
+        _beaconOfHopeActive = false;
+        _majorImageActive = false;
+        _auraOfCourageActive = false;
         _enemyResolveAt = -1;
         _defeatedEnemyPending = null;
         _respawnEnemiesAt = -1;
@@ -3789,8 +4261,41 @@ public sealed class Game : IDisposable
         _enemyAi.Clear();
         _enemyLootKits.Clear();
         SpawnEnemyPack(Phase3EntryEnemyPack);
+        if (!EnableRunMetaLayer)
+        {
+            SpawnEnemyPack(Phase3UpperRouteEnemyPack);
+            SpawnEnemyPack(Phase3LowerRouteEnemyPack);
+            _phase3RouteWaveSpawned = true;
+            _phase3SanctumWaveSpawned = false;
+            return;
+        }
+
         _phase3RouteWaveSpawned = false;
         _phase3SanctumWaveSpawned = false;
+    }
+
+    private void DisableRunMetaLayerStateIfNeeded()
+    {
+        if (EnableRunMetaLayer)
+        {
+            return;
+        }
+
+        _runArchetype = RunArchetype.None;
+        _runRelic = RunRelic.None;
+        _phase3RouteChoice = Phase3RouteChoice.None;
+        _phase3RiskEventResolved = false;
+        _phase3XpPercentMod = 0;
+        _phase3EnemyAttackBonus = 0;
+        _phase3EnemiesDefeated = 0;
+        _phase3PreSanctumRewardGranted = false;
+        _phase3RouteWaveSpawned = true;
+        _milestoneChoicesTaken = 0;
+        _milestoneExecutionRank = 0;
+        _milestoneArcRank = 0;
+        _milestoneEscapeRank = 0;
+        ResetRelicCombatTriggers();
+        ResetMilestoneCombatTriggers();
     }
 
     private int SpawnEnemyPack((int X, int Y, string Key)[] pack)
@@ -3881,6 +4386,7 @@ public sealed class Game : IDisposable
 
     private void TryGrantPhase3PreSanctumRouteReward()
     {
+        if (!EnableRunMetaLayer) return;
         if (_gameState != GameState.Playing) return;
         if (_phase3PreSanctumRewardGranted) return;
         if (!IsPhase3SanctumUnlockReady()) return;
@@ -3901,8 +4407,8 @@ public sealed class Game : IDisposable
     {
         _runMeleeBonus += 1;
         _runSpellBonus += 1;
-        AddInventoryItemQuantity("mana_draught", 1);
-        return "Upper route boon: +1 melee, +1 spell, +1 Mana Draught.";
+        AddInventoryItemQuantity("healing_draught", 1);
+        return "Upper route boon: +1 melee, +1 spell, +1 Healing Draught.";
     }
 
     private string GrantLowerRoutePreSanctumReward()
@@ -3915,6 +4421,31 @@ public sealed class Game : IDisposable
 
     private void TrySpawnPhase3SanctumWaveIfNeeded()
     {
+        if (!EnableRunMetaLayer)
+        {
+            if (_gameState != GameState.Playing) return;
+            if (_phase3SanctumWaveSpawned) return;
+            if (_currentFloorZone != FloorMacroZone.SanctumRing) return;
+
+            if (_enemies.Any(enemy =>
+                    enemy.IsAlive &&
+                    string.Equals(ResolveEnemyTypeKey(enemy.Type), "goblin_general", StringComparison.Ordinal)))
+            {
+                _phase3SanctumWaveSpawned = true;
+                return;
+            }
+
+            var bossDenSpawned = SpawnEnemyPack(Phase3SanctumEnemyPack);
+            if (bossDenSpawned <= 0)
+            {
+                return;
+            }
+
+            _phase3SanctumWaveSpawned = true;
+            ShowRewardMessage($"Boss den reached. {bossDenSpawned} defenders rally around the Goblin General.", requireAcknowledge: false, visibleSeconds: 10);
+            return;
+        }
+
         if (_gameState != GameState.Playing) return;
         if (_phase3SanctumWaveSpawned) return;
         if (_currentFloorZone != FloorMacroZone.SanctumRing) return;
@@ -3967,12 +4498,9 @@ public sealed class Game : IDisposable
             var firstBundle = GrantRewardSupplyLoot();
             var secondBundle = GrantRewardSupplyLoot();
             var hpGain = Math.Max(8, (int)Math.Ceiling(_player.MaxHp * 0.22));
-            var mpGain = Math.Max(4, (int)Math.Ceiling(_player.MaxMana * 0.22));
             var beforeHp = _player.CurrentHp;
-            var beforeMp = _player.CurrentMana;
             _player.CurrentHp = Math.Min(_player.MaxHp, _player.CurrentHp + hpGain);
-            _player.CurrentMana = Math.Min(_player.MaxMana, _player.CurrentMana + mpGain);
-            routeOutcome = $"Lower route cache delivers {firstBundle}, {secondBundle}, HP +{_player.CurrentHp - beforeHp}, MP +{_player.CurrentMana - beforeMp}.";
+            routeOutcome = $"Lower route cache delivers {firstBundle}, {secondBundle}, HP +{_player.CurrentHp - beforeHp}.";
         }
 
         var summary = string.IsNullOrWhiteSpace(routeOutcome)
@@ -3983,6 +4511,7 @@ public sealed class Game : IDisposable
 
     private bool TryOpenPhase3RouteForkChoice()
     {
+        if (!EnableRunMetaLayer) return false;
         if (_player == null) return false;
         if (_gameState != GameState.Playing) return false;
         if (_activeRewardNode != null || _currentEnemy != null) return false;
@@ -4008,6 +4537,7 @@ public sealed class Game : IDisposable
 
     private bool TryOpenPhase3RiskEvent()
     {
+        if (!EnableRunMetaLayer) return false;
         if (_player == null) return false;
         if (_gameState != GameState.Playing) return false;
         if (_activeRewardNode != null || _currentEnemy != null) return false;
@@ -4084,12 +4614,9 @@ public sealed class Game : IDisposable
                 case 0:
                 {
                     var hpGain = Math.Max(8, (int)Math.Ceiling(_player.MaxHp * 0.35));
-                    var mpGain = Math.Max(4, (int)Math.Ceiling(_player.MaxMana * 0.35));
                     var beforeHp = _player.CurrentHp;
-                    var beforeMp = _player.CurrentMana;
                     _player.CurrentHp = Math.Min(_player.MaxHp, _player.CurrentHp + hpGain);
-                    _player.CurrentMana = Math.Min(_player.MaxMana, _player.CurrentMana + mpGain);
-                    resultMessage = $"Recovered supplies: HP +{_player.CurrentHp - beforeHp}, MP +{_player.CurrentMana - beforeMp}.";
+                    resultMessage = $"Recovered supplies: HP +{_player.CurrentHp - beforeHp}.";
                     break;
                 }
                 case 1:
@@ -4113,17 +4640,7 @@ public sealed class Game : IDisposable
                     else if (_runArchetype == RunArchetype.Arcanist)
                     {
                         _runSpellBonus += 1;
-                        if (_player.MaxMana > 0)
-                        {
-                            var manaBurst = Math.Max(4, (int)Math.Ceiling(_player.MaxMana * 0.20));
-                            var beforeMana = _player.CurrentMana;
-                            _player.CurrentMana = Math.Min(_player.MaxMana, _player.CurrentMana + manaBurst);
-                            resultMessage = $"Combat edge forged (Arcanist): +1 spell damage, MP +{_player.CurrentMana - beforeMana}.";
-                        }
-                        else
-                        {
-                            resultMessage = "Combat edge forged (Arcanist): +1 spell damage.";
-                        }
+                        resultMessage = "Combat edge forged (Arcanist): +1 spell damage.";
                     }
                     else if (_runArchetype == RunArchetype.Skirmisher)
                     {
@@ -4164,8 +4681,7 @@ public sealed class Game : IDisposable
         if (leveledFromReward)
         {
             ShowRewardMessage(resultMessage, requireAcknowledge: false, visibleSeconds: 12);
-            _selectedStatIndex = 0;
-            _gameState = GameState.LevelUp;
+            BeginLevelUpFlow();
             return;
         }
 
@@ -4368,7 +4884,7 @@ public sealed class Game : IDisposable
         var rewardItemId = _rng.NextDouble() < 0.58
             ? "health_potion"
             : _rng.NextDouble() < 0.80
-                ? "mana_draught"
+                ? "healing_draught"
                 : "sharpening_oil";
         var quantity = rewardItemId == "health_potion" && _rng.NextDouble() < 0.28 ? 2 : 1;
         AddInventoryItemQuantity(rewardItemId, quantity);
@@ -4856,9 +5372,9 @@ public sealed class Game : IDisposable
         _selectedCombatSkillIndex = 0;
         _selectedSpellIndex = 0;
         _selectedCombatItemIndex = 0;
+        _combatSkillMenuOffset = 0;
         _combatItemMenuOffset = 0;
         _selectedEncounterTargetIndex = -1;
-        _enemyPoisoned = 0;
         ResetEncounterContext();
         BeginEncounterFromSeed(enemy);
         SyncEncounterTargetSelection(preferCurrentEnemy: true);
@@ -4881,9 +5397,107 @@ public sealed class Game : IDisposable
         if (_player != null)
         {
             PushCombatLog($"{_player.CharacterClass.Name}: {GetClassCombatTag(_player.CharacterClass.Name)}");
-            PushCombatLog($"HP {_player.CurrentHp}/{_player.MaxHp}  MP {_player.CurrentMana}/{_player.MaxMana}");
+            PushCombatLog($"HP {_player.CurrentHp}/{_player.MaxHp}");
             _player.HasUsedSecondWind = false;
             _warCryAvailable = _player.HasSkill("war_cry");
+            _arcaneWardUsedThisCombat = false;
+            _channelDivinityUsedThisCombat = false;
+            _channelDivinityPrimed = false;
+            _cuttingWordsUsedThisCombat = false;
+            _layOnHandsUsedThisCombat = false;
+            _battleCryUsedThisCombat = false;
+            _battleCryPrimed = false;
+            _vanishUsedThisCombat = false;
+            _vanishPrimed = false;
+            _divineSmiteUsedThisCombat = false;
+            _divineSmitePrimed = false;
+            _empowerSpellUsedThisCombat = false;
+            _empowerSpellPrimed = false;
+            _divineFavorUsedThisCombat = false;
+            _divineFavorActive = false;
+            _magicWeaponActive = false;
+            _flameArrowsActive = false;
+            _zephyrStrikeActive = false;
+            _zephyrStrikeHitPrimed = false;
+            _crusadersMantleActive = false;
+            _shieldOfFaithActive = false;
+            _blessActive = false;
+            _heroismActive = false;
+            _shieldSpellActive = false;
+            _shieldSpellTurnsLeft = 0;
+            _barkskinActive = false;
+            _blurActive = false;
+            _hasteActive = false;
+            _playerTempHp = 0;
+            // Batch 2 combat reset
+            _mirrorImageCharges = 0;
+            _absorbElementsCharged = false;
+            _expeditiousRetreatActive = false;
+            _longstriderActive = false;
+            _hexActive = false;
+            _protFromEvilActive = false;
+            _sanctuaryActive = false;
+            _compelledDuelActive = false;
+            _enhanceAbilityActive = false;
+            // Batch 3 combat reset
+            _hellishRebukePrimed = false;
+            _armorOfAgathysTempHp = 0;
+            _fireShieldActive = false;
+            _wrathOfStormPrimed = false;
+            _spiritShroudActive = false;
+            _deathWardActive = false;
+            _holyRebukePrimed = false;
+            _thornsActive = false;
+            _stoneskinActive = false;
+            _cuttingWordsPrimed = false;
+            _greaterInvisibilityActive = false;
+            // Batch 4+5 combat reset
+            _counterspellPrimed = false;
+            _invisibilityActive = false;
+            _elementalWeaponActive = false;
+            _elementalWeaponElement = string.Empty;
+            _revivifyUsed = false;
+            _blinkActive = false;
+            _protEnergyActive = false;
+            _protEnergyElement = string.Empty;
+            _beaconOfHopeActive = false;
+            _majorImageActive = false;
+            _auraOfCourageActive = false;
+            _activeSummon = null;
+            _activeTransformation = null;
+            _wordOfRenewalUsedThisCombat = false;
+            // D&D feat reset
+            _defensiveDuelistAvailable = _player.HasFeat("defensive_duelist_feat");
+            _luckyUsedThisCombat = false;
+            _luckyPrimed = false;
+            _sentinelAvailable = _player.HasFeat("sentinel_feat");
+            _indomitableAvailable = _player.HasFeat("warrior_indomitable_feat");
+            _uncannyDodgeAvailable = _player.HasFeat("rogue_uncanny_dodge_feat");
+            _enemyHasActedThisCombat = false;
+            _metamagicUsedThisCombat = false;
+            _metamagicPrimed = false;
+            _sharpshooterUsedThisCombat = false;
+            _sharpshooterPrimed = false;
+            _countercharmAvailable = _player.HasFeat("bard_countercharm_feat");
+            _riposteAvailable = _player.HasFeat("riposte_feat");
+            _shieldExpertAvailable = _player.HasFeat("shield_expert_feat");
+            _recklessAttackUsedThisCombat = false;
+            _overchannelUsedThisCombat = false;
+            _overchannelPrimed = false;
+            _spiritualWeaponUsedThisCombat = false;
+            _spiritualWeaponPrimed = false;
+            _bardicInspirationUsedThisCombat = false;
+            _bardicInspirationPrimed = false;
+            _bardicInspirationForAttack = false;
+            _enemyNextAttackDisadvantage = false;
+            _enemyNextAttackAdvantage = false;
+            _playerAttackAdvantage = false;
+            _playerAttackDisadvantage = false;
+            _playerSaveAdvantage = false;
+            _playerSaveDisadvantage = false;
+            _playerConditions.Clear();
+            // Meditation: restore 1 L1 spell slot at the start of each fight
+            if (_player.HasSkill("meditation")) _player.RestoreSpellSlot(1);
         }
         else
         {
@@ -4923,8 +5537,12 @@ public sealed class Game : IDisposable
 
             actions.Add("Attack");
             if (GetCombatSkills().Count > 0) actions.Add("Skills");
-            if (_player.GetKnownSpells().Count > 0) actions.Add("Spells");
+            if (_activeTransformation != null)
+                actions.Add("Dismiss Form");
+            else if (_player.GetKnownSpells().Count > 0)
+                actions.Add("Spells");
             if (GetCombatConsumables().Count > 0) actions.Add("Items");
+            actions.Add("Wait");
         }
         else
         {
@@ -4965,13 +5583,13 @@ public sealed class Game : IDisposable
             return;
         }
 
-        if (Pressed(KeyLeft))
+        if (PressedOrRepeat(KeyLeft))
         {
             CycleEncounterTarget(-1);
             return;
         }
 
-        if (Pressed(KeyRight))
+        if (PressedOrRepeat(KeyRight))
         {
             CycleEncounterTarget(1);
             return;
@@ -4979,13 +5597,13 @@ public sealed class Game : IDisposable
 
         var actions = GetCombatActions();
 
-        if (Pressed(KeyUp))
+        if (PressedOrRepeat(KeyUp))
         {
             _selectedActionIndex = (_selectedActionIndex - 1 + actions.Count) % actions.Count;
             return;
         }
 
-        if (Pressed(KeyDown))
+        if (PressedOrRepeat(KeyDown))
         {
             _selectedActionIndex = (_selectedActionIndex + 1) % actions.Count;
             return;
@@ -5009,8 +5627,19 @@ public sealed class Game : IDisposable
             case "Spells":
                 OpenCombatSpellMenu();
                 break;
+            case "Dismiss Form":
+                if (_activeTransformation != null)
+                {
+                    RevertTransformation("You dismiss your form, returning to normal.");
+                    EndActiveConcentration("Transformation dismissed.");
+                }
+                break;
             case "Items":
                 OpenCombatItemMenu();
+                break;
+            case "Wait":
+                PushCombatLog("You hold position and give up the initiative.");
+                DoEnemyAttack();
                 break;
             case "Flee":
                 DoFlee();
@@ -5112,6 +5741,11 @@ public sealed class Game : IDisposable
 
     private int GetEnemyAttackRangeTiles(Enemy enemy)
     {
+        if (CombatStatusRules.LimitsEnemyAttackRangeToMelee(enemy.StatusEffects))
+        {
+            return CombatMeleeRangeTiles;
+        }
+
         var enemyKey = ResolveEnemyTypeKey(enemy.Type);
         if (string.Equals(enemyKey, "goblin_slinger", StringComparison.Ordinal))
         {
@@ -5124,12 +5758,20 @@ public sealed class Game : IDisposable
     private int GetEnemyCombatMoveBudget(Enemy enemy)
     {
         var enemyKey = ResolveEnemyTypeKey(enemy.Type);
-        return enemyKey switch
+        var baseBudget = enemyKey switch
         {
             "goblin_skirmisher" => EnemySkirmisherMoveBudgetTiles,
             "warg" => EnemySkirmisherMoveBudgetTiles,
             _ => EnemyDefaultMoveBudgetTiles
         };
+
+        if (CombatStatusRules.PreventsEnemyMovement(enemy.StatusEffects))
+        {
+            return 0;
+        }
+
+        var penalty = CombatStatusRules.GetMovePenalty(enemy.StatusEffects);
+        return Math.Max(0, baseBudget - penalty);
     }
 
     private bool CanEnemyTraverseCombatTile(Enemy movingEnemy, int x, int y)
@@ -5194,10 +5836,62 @@ public sealed class Game : IDisposable
             return false;
         }
 
-        enemy.X = destination.X;
-        enemy.Y = destination.Y;
+        foreach (var step in moveDecision.Steps)
+        {
+            enemy.X = step.X;
+            enemy.Y = step.Y;
+            ResolveEnemyEntryHazards(enemy);
+            if (!enemy.IsAlive)
+            {
+                movedTiles = moveDecision.Steps.Count;
+                return true;
+            }
+        }
+
         movedTiles = moveDecision.Steps.Count;
         PushCombatLog($"{enemy.Type.Name} repositions {movedTiles} tile{(movedTiles == 1 ? string.Empty : "s")}.");
+        return true;
+    }
+
+    private bool TryExecuteEnemyRetreatMovement(Enemy enemy)
+    {
+        if (_player == null || !enemy.IsAlive)
+        {
+            return false;
+        }
+
+        var moveBudget = GetEnemyCombatMoveBudget(enemy);
+        if (moveBudget <= 0)
+        {
+            return false;
+        }
+
+        var reachable = EncounterMovementRules.BuildReachableTiles(
+            enemy.X,
+            enemy.Y,
+            moveBudget,
+            (x, y) => CanEnemyTraverseCombatTile(enemy, x, y));
+        if (reachable.Count == 0)
+        {
+            return false;
+        }
+
+        var currentDistance = Math.Abs(enemy.X - _player.X) + Math.Abs(enemy.Y - _player.Y);
+        var retreatTile = reachable
+            .OrderByDescending(tile => Math.Abs(tile.X - _player.X) + Math.Abs(tile.Y - _player.Y))
+            .ThenBy(tile => Math.Abs(tile.X - enemy.X) + Math.Abs(tile.Y - enemy.Y))
+            .FirstOrDefault();
+
+        var retreatDistance = Math.Abs(retreatTile.X - _player.X) + Math.Abs(retreatTile.Y - _player.Y);
+        if (retreatDistance <= currentDistance)
+        {
+            return false;
+        }
+
+        enemy.X = retreatTile.X;
+        enemy.Y = retreatTile.Y;
+        ResolveEnemyEntryHazards(enemy);
+        PushCombatLog($"{enemy.Type.Name} recoils from fear and falls back.");
         return true;
     }
 
@@ -5214,7 +5908,7 @@ public sealed class Game : IDisposable
                 TargetAlive: false);
         }
 
-        return EncounterTargetingRules.Validate(
+        return EncounterTargetingRules.ValidateMelee(
             _player.X,
             _player.Y,
             _currentEnemy.X,
@@ -5271,6 +5965,539 @@ public sealed class Game : IDisposable
             GetEnemyAttackRangeTiles(enemy),
             requiresLineOfSight: true,
             HasLineOfSight);
+    }
+
+    private static bool UsesSelfCenteredSpellTargeting(SpellDefinition spell)
+    {
+        return SpellData.ResolveEffectRoute(spell).TargetShape == SpellTargetShape.Self;
+    }
+
+    private static bool UsesFreeTileSpellTargeting(SpellDefinition spell)
+    {
+        return SpellData.ResolveEffectRoute(spell).TargetShape is
+            SpellTargetShape.Tile or
+            SpellTargetShape.Radius or
+            SpellTargetShape.Line or
+            SpellTargetShape.Cone;
+    }
+
+    private static IReadOnlyList<string> GetSpellVariantOptions(SpellDefinition spell)
+    {
+        return spell.Id switch
+        {
+            "mage_chromatic_orb" => ChromaticOrbVariants,
+            "cleric_command" => CommandVariants,
+            "paladin_elemental_weapon" => ElementalWeaponVariants,
+            "mage_protection_from_energy" => ProtFromEnergyVariants,
+            _ => Array.Empty<string>()
+        };
+    }
+
+    private static bool SpellSupportsVariantSelection(SpellDefinition spell)
+    {
+        return GetSpellVariantOptions(spell).Count > 0;
+    }
+
+    private void ResetPendingCombatSpellVariant(SpellDefinition spell)
+    {
+        var options = GetSpellVariantOptions(spell);
+        _pendingCombatSpellVariantIndex = options.Count == 0
+            ? 0
+            : Math.Clamp(_pendingCombatSpellVariantIndex, 0, options.Count - 1);
+    }
+
+    private bool CyclePendingCombatSpellVariant(SpellDefinition spell, int delta)
+    {
+        var options = GetSpellVariantOptions(spell);
+        if (options.Count == 0)
+        {
+            _pendingCombatSpellVariantIndex = 0;
+            return false;
+        }
+
+        var nextIndex = (_pendingCombatSpellVariantIndex + delta) % options.Count;
+        if (nextIndex < 0)
+        {
+            nextIndex += options.Count;
+        }
+
+        if (nextIndex == _pendingCombatSpellVariantIndex)
+        {
+            return false;
+        }
+
+        _pendingCombatSpellVariantIndex = nextIndex;
+        return true;
+    }
+
+    private string GetSelectedPendingSpellVariantId(SpellDefinition spell)
+    {
+        var options = GetSpellVariantOptions(spell);
+        if (options.Count == 0)
+        {
+            return string.Empty;
+        }
+
+        _pendingCombatSpellVariantIndex = Math.Clamp(_pendingCombatSpellVariantIndex, 0, options.Count - 1);
+        return options[_pendingCombatSpellVariantIndex];
+    }
+
+    private string GetSelectedPendingSpellVariantLabel(SpellDefinition spell)
+    {
+        var variantId = GetSelectedPendingSpellVariantId(spell);
+        if (string.IsNullOrWhiteSpace(variantId))
+        {
+            return string.Empty;
+        }
+
+        return spell.Id switch
+        {
+            "mage_chromatic_orb" => $"Element: {char.ToUpperInvariant(variantId[0])}{variantId[1..]}",
+            "paladin_elemental_weapon" => $"Element: {char.ToUpperInvariant(variantId[0])}{variantId[1..]}",
+            "mage_protection_from_energy" => $"Resist: {char.ToUpperInvariant(variantId[0])}{variantId[1..]}",
+            "cleric_command" => variantId switch
+            {
+                "halt" => "Command: Halt",
+                "flee" => "Command: Flee",
+                "grovel" => "Command: Grovel",
+                _ => $"Command: {variantId}"
+            },
+            _ => variantId
+        };
+    }
+
+    private void PrimeCombatSpellTargeting(SpellDefinition spell)
+    {
+        _nextMoveAt = -1;
+        if (_player == null)
+        {
+            _combatSpellTargetCursorX = -1;
+            _combatSpellTargetCursorY = -1;
+            return;
+        }
+
+        if (!UsesFreeTileSpellTargeting(spell))
+        {
+            _combatSpellTargetCursorX = -1;
+            _combatSpellTargetCursorY = -1;
+            return;
+        }
+
+        var anchor = _currentEnemy != null
+            ? (_currentEnemy.X, _currentEnemy.Y)
+            : (_player.X, _player.Y);
+        _combatSpellTargetCursorX = anchor.Item1;
+        _combatSpellTargetCursorY = anchor.Item2;
+    }
+
+    private bool TryMoveCombatSpellTargetCursor(int dx, int dy)
+    {
+        if (_player == null || !TryGetPendingCombatSpell(out var pendingSpell) || !UsesFreeTileSpellTargeting(pendingSpell))
+        {
+            return false;
+        }
+
+        var targetX = _combatSpellTargetCursorX < 0 ? _player.X : _combatSpellTargetCursorX;
+        var targetY = _combatSpellTargetCursorY < 0 ? _player.Y : _combatSpellTargetCursorY;
+        targetX = Math.Clamp(targetX + dx, 1, GameMap.MapWidthTiles - 2);
+        targetY = Math.Clamp(targetY + dy, 1, GameMap.MapHeightTiles - 2);
+        if (IsWallOrSealed(targetX, targetY))
+        {
+            return false;
+        }
+
+        _combatSpellTargetCursorX = targetX;
+        _combatSpellTargetCursorY = targetY;
+        return true;
+    }
+
+    private (bool IsLegal, int DistanceTiles, int MaxRangeTiles, bool HasLineOfSight, string BlockedReason) ValidateCombatSpellAim(SpellDefinition spell)
+    {
+        if (_player == null)
+        {
+            return (false, 0, GetSpellTargetRangeTiles(spell), false, "No active player.");
+        }
+
+        if (UsesSelfCenteredSpellTargeting(spell))
+        {
+            return (true, 0, 0, true, string.Empty);
+        }
+
+        if (UsesFreeTileSpellTargeting(spell))
+        {
+            var (anchorX, anchorY) = ResolveSpellAnchorTile(spell);
+            var maxRange = GetSpellTargetRangeTiles(spell);
+            if (anchorX < 0 || anchorY < 0 || IsWallOrSealed(anchorX, anchorY))
+            {
+                return (false, 0, maxRange, false, "Anchor tile is blocked.");
+            }
+
+            var distance = EncounterTargetingRules.GetTileDistance(_player.X, _player.Y, anchorX, anchorY);
+            var inRange = distance <= maxRange;
+            var hasLineOfSight = HasLineOfSight(_player.X, _player.Y, anchorX, anchorY);
+            var blockedReason = !inRange
+                ? $"Anchor out of range ({distance}/{maxRange} tiles)."
+                : !hasLineOfSight
+                    ? "Line of sight to anchor is blocked."
+                    : string.Empty;
+            return (inRange && hasLineOfSight, distance, maxRange, hasLineOfSight, blockedReason);
+        }
+
+        var validation = ValidateCurrentEnemyTargetForSpell(spell);
+        var route = SpellData.ResolveEffectRoute(spell);
+        var legalityReason = string.Empty;
+        if (validation.IsLegal && _currentEnemy != null && TryGetSpellCreatureTypeBlockReason(spell, _currentEnemy, route, out var typeReason))
+        {
+            legalityReason = typeReason;
+        }
+
+        return (
+            validation.IsLegal && string.IsNullOrWhiteSpace(legalityReason),
+            validation.DistanceTiles,
+            validation.MaxRangeTiles,
+            validation.HasLineOfSight,
+            string.IsNullOrWhiteSpace(legalityReason)
+                ? validation.IsLegal ? string.Empty : validation.BuildBlockedReason()
+                : legalityReason);
+    }
+
+    private string GetSpellTargetDescriptor(SpellDefinition spell)
+    {
+        if (UsesSelfCenteredSpellTargeting(spell))
+        {
+            return "Self-centered";
+        }
+
+        if (UsesFreeTileSpellTargeting(spell))
+        {
+            var (anchorX, anchorY) = ResolveSpellAnchorTile(spell);
+            return $"Anchor {anchorX},{anchorY}";
+        }
+
+        return _currentEnemy?.Type.Name ?? "None";
+    }
+
+    private (int X, int Y) ResolveSpellAnchorTile(SpellDefinition spell)
+    {
+        if (_player == null)
+        {
+            return (0, 0);
+        }
+
+        var route = SpellData.ResolveEffectRoute(spell);
+        return route.TargetShape switch
+        {
+            SpellTargetShape.Self => (_player.X, _player.Y),
+            _ when UsesFreeTileSpellTargeting(spell) && _combatSpellTargetCursorX >= 0 && _combatSpellTargetCursorY >= 0 =>
+                (_combatSpellTargetCursorX, _combatSpellTargetCursorY),
+            _ when _currentEnemy != null => (_currentEnemy.X, _currentEnemy.Y),
+            _ => (_player.X, _player.Y)
+        };
+    }
+
+    private IReadOnlyList<Enemy> ResolveSpellAffectedEnemies(SpellDefinition spell)
+    {
+        if (_player == null)
+        {
+            return Array.Empty<Enemy>();
+        }
+
+        if (string.Equals(spell.Id, "mage_acid_splash", StringComparison.Ordinal))
+        {
+            return ResolveAcidSplashTargets();
+        }
+
+        var route = SpellData.ResolveEffectRoute(spell);
+        var (anchorX, anchorY) = ResolveSpellAnchorTile(spell);
+        return EncounterSpellAreaRules.ResolveAffectedEnemies(
+            spell,
+            route,
+            _player.X,
+            _player.Y,
+            anchorX,
+            anchorY,
+            GetAliveEncounterEnemies(),
+            HasLineOfSight)
+            .Where(enemy => SpellAffectsCreatureType(route, enemy))
+            .ToList();
+    }
+
+    private IReadOnlyList<Enemy> ResolveAcidSplashTargets()
+    {
+        if (_currentEnemy == null)
+        {
+            return Array.Empty<Enemy>();
+        }
+
+        var targets = new List<Enemy> { _currentEnemy };
+        var splashTarget = GetAliveEncounterEnemies()
+            .Where(enemy => !ReferenceEquals(enemy, _currentEnemy))
+            .Where(enemy => EncounterTargetingRules.GetTileDistance(_currentEnemy.X, _currentEnemy.Y, enemy.X, enemy.Y) <= 1)
+            .OrderBy(enemy => EncounterTargetingRules.GetTileDistance(_currentEnemy.X, _currentEnemy.Y, enemy.X, enemy.Y))
+            .ThenBy(enemy => enemy.CurrentHp)
+            .FirstOrDefault();
+
+        if (splashTarget != null)
+        {
+            targets.Add(splashTarget);
+        }
+
+        return targets;
+    }
+
+    private string BuildSpellAffectedTargetSummary(SpellDefinition spell)
+    {
+        var affectedEnemies = ResolveSpellAffectedEnemies(spell);
+        if (affectedEnemies.Count == 0)
+        {
+            return UsesSelfCenteredSpellTargeting(spell)
+                ? "Affects: no enemies currently in area."
+                : "Affects: no legal enemies beyond the anchor.";
+        }
+
+        var names = string.Join(", ", affectedEnemies
+            .Take(3)
+            .Select(enemy => enemy.Type.Name));
+        if (affectedEnemies.Count > 3)
+        {
+            names = $"{names}, +{affectedEnemies.Count - 3} more";
+        }
+
+        return $"Affects {affectedEnemies.Count}: {names}";
+    }
+
+    private static bool IsEmpoweredMeleeSpell(SpellDefinition spell)
+    {
+        return SpellData.ResolveEffectRoute(spell).CombatFamily == SpellCombatFamily.SmiteStrike ||
+               string.Equals(spell.Id, "ranger_ensnaring_strike", StringComparison.Ordinal);
+    }
+
+    private IReadOnlyList<CombatStatusApplySpec> ResolveSpellOnHitStatuses(SpellDefinition spell, SpellEffectRouteSpec route)
+    {
+        if (string.Equals(spell.Id, "mage_chromatic_orb", StringComparison.Ordinal))
+        {
+            return GetSelectedPendingSpellVariantId(spell) switch
+            {
+                "acid" => new[] { new CombatStatusApplySpec { Kind = CombatStatusKind.Corroded, Potency = 1, DurationTurns = 2 } },
+                "cold" => new[] { new CombatStatusApplySpec { Kind = CombatStatusKind.Chilled, Potency = 1, DurationTurns = 2 } },
+                "fire" => new[] { new CombatStatusApplySpec { Kind = CombatStatusKind.Burning, Potency = 2, DurationTurns = 2 } },
+                "lightning" => new[] { new CombatStatusApplySpec { Kind = CombatStatusKind.Shocked, Potency = 1, DurationTurns = 1 } },
+                "poison" => new[] { new CombatStatusApplySpec { Kind = CombatStatusKind.Poison, Potency = 2, DurationTurns = 2 } },
+                _ => Array.Empty<CombatStatusApplySpec>()
+            };
+        }
+
+        if (string.Equals(spell.Id, "cleric_command", StringComparison.Ordinal))
+        {
+            return GetSelectedPendingSpellVariantId(spell) switch
+            {
+                "flee" => new[] { new CombatStatusApplySpec { Kind = CombatStatusKind.Feared, Potency = 1, DurationTurns = 2 } },
+                "grovel" => new CombatStatusApplySpec[]
+                {
+                    new() { Kind = CombatStatusKind.Incapacitated, Potency = 1, DurationTurns = 1 },
+                    new() { Kind = CombatStatusKind.Prone, Potency = 1, DurationTurns = 2 }
+                },
+                _ => new[] { new CombatStatusApplySpec { Kind = CombatStatusKind.Incapacitated, Potency = 1, DurationTurns = 1 } }
+            };
+        }
+
+        return route.OnHitStatuses;
+    }
+
+    private SpellElement ResolveSpellElementForCast(SpellDefinition spell, SpellEffectRouteSpec route)
+    {
+        if (string.Equals(spell.Id, "mage_chromatic_orb", StringComparison.Ordinal) ||
+            string.Equals(spell.Id, "paladin_elemental_weapon", StringComparison.Ordinal) ||
+            string.Equals(spell.Id, "mage_protection_from_energy", StringComparison.Ordinal))
+        {
+            return GetSelectedPendingSpellVariantId(spell) switch
+            {
+                "acid" => SpellElement.Acid,
+                "cold" => SpellElement.Cold,
+                "fire" => SpellElement.Fire,
+                "lightning" => SpellElement.Lightning,
+                "poison" => SpellElement.Poison,
+                "thunder" => SpellElement.Thunder,
+                _ => route.Element
+            };
+        }
+
+        return route.Element;
+    }
+
+    private string ResolveSpellDamageTagForCast(SpellDefinition spell, SpellEffectRouteSpec route)
+    {
+        var element = ResolveSpellElementForCast(spell, route);
+        return element switch
+        {
+            SpellElement.Acid => "acid",
+            SpellElement.Cold => "cold",
+            SpellElement.Fire => "fire",
+            SpellElement.Lightning => "lightning",
+            SpellElement.Poison => "poison",
+            SpellElement.Thunder => "thunder",
+            _ => spell.DamageTag
+        };
+    }
+
+    private (int BaseDamage, int Variance, int ArmorBypass) ResolveSpellDamageProfile(SpellDefinition spell, Enemy target)
+    {
+        var baseDamage = spell.BaseDamage;
+        var variance = spell.Variance;
+        var armorBypass = spell.ArmorBypass + (_player?.SpellArmorBypassBonus ?? 0);
+
+        if (string.Equals(spell.Id, "cleric_toll_the_dead", StringComparison.Ordinal) &&
+            target.CurrentHp < target.Type.MaxHp)
+        {
+            baseDamage += 4;
+            variance += 2;
+        }
+
+        return (baseDamage, variance, armorBypass);
+    }
+
+    private int ResolveSpellHitCount(SpellDefinition spell)
+    {
+        return string.Equals(spell.Id, "mage_scorching_ray", StringComparison.Ordinal) ? 2 : 1;
+    }
+
+    private bool TryPushEnemyAwayFromPoint(Enemy enemy, int originX, int originY, int maxTiles, out int pushedTiles)
+    {
+        pushedTiles = 0;
+        var stepX = Math.Sign(enemy.X - originX);
+        var stepY = Math.Sign(enemy.Y - originY);
+        if (stepX == 0 && stepY == 0)
+        {
+            stepY = 1;
+        }
+
+        for (var step = 0; step < maxTiles; step++)
+        {
+            var nextX = enemy.X + stepX;
+            var nextY = enemy.Y + stepY;
+            if (IsWallOrSealed(nextX, nextY))
+            {
+                break;
+            }
+
+            if (_enemies.Any(other => !ReferenceEquals(other, enemy) && other.IsAlive && other.X == nextX && other.Y == nextY))
+            {
+                break;
+            }
+
+            if (_player != null && _player.X == nextX && _player.Y == nextY)
+            {
+                break;
+            }
+
+            enemy.X = nextX;
+            enemy.Y = nextY;
+            pushedTiles += 1;
+        }
+
+        return pushedTiles > 0;
+    }
+
+    private bool ResolveEmpoweredMeleeSpellStrike(SpellDefinition spell, SpellEffectRouteSpec route, string tierLabel)
+    {
+        if (_player == null || _currentEnemy == null)
+        {
+            return false;
+        }
+
+        var meleeValidation = ValidateCurrentEnemyTargetForMelee();
+        if (!meleeValidation.IsLegal)
+        {
+            PushCombatLog($"{spell.Name} requires a melee target: {meleeValidation.BuildBlockedReason()}");
+            return false;
+        }
+
+        var warCryDamage = 0;
+        if (_warCryAvailable && _player.HasSkill("war_cry"))
+        {
+            warCryDamage = _player.WarCryBonus;
+            _warCryAvailable = false;
+            PushCombatLog($"War Cry adds {warCryDamage} first-strike damage.");
+        }
+
+        var markBonus = GetEnemyIncomingDamageBonus(_currentEnemy);
+        var (weaponDamage, crit, rawDamage, armorMitigation, smiteCritThreshold) = CalcPlayerDamage();
+        var (bonusBaseDamage, bonusVariance, bonusArmorBypass) = ResolveSpellDamageProfile(spell, _currentEnemy);
+        var weaponRiderEmpowerReroll = ConsumeEmpowerSpellPrime();
+        var weaponRiderChannelBonus = GetAndConsumeChannelDivinityBonus();
+        var spellBasePlusBonus = bonusBaseDamage + _player.SpellDamageBonus + GetClassSpellDamageBonus(_player) + _runSpellBonus + GetConditionSpellModifier() + weaponRiderChannelBonus;
+        var (spellDamage, spellRawDamage, spellArmorMitigation, spellStatPower) = CalcSpellDamageAgainstEnemy(
+            _currentEnemy, spell.ScalingStat, spellBasePlusBonus, bonusVariance, bonusArmorBypass, spell.SpellLevel);
+        if (weaponRiderEmpowerReroll)
+        {
+            var (spellDamage2, spellRawDamage2, spellArmorMitigation2, spellStatPower2) = CalcSpellDamageAgainstEnemy(
+                _currentEnemy, spell.ScalingStat, spellBasePlusBonus, bonusVariance, bonusArmorBypass, spell.SpellLevel);
+            if (spellDamage2 > spellDamage)
+            {
+                (spellDamage, spellRawDamage, spellArmorMitigation, spellStatPower) = (spellDamage2, spellRawDamage2, spellArmorMitigation2, spellStatPower2);
+                PushCombatLog("Empowered Spell — the second roll was stronger!");
+            }
+        }
+        var total = weaponDamage + spellDamage + warCryDamage;
+        _currentEnemy.CurrentHp = Math.Max(0, _currentEnemy.CurrentHp - total);
+        if (total > 0)
+        {
+            TryBreakDamageSensitiveStatuses(_currentEnemy, spell.Name);
+        }
+
+        PushCombatLog($"{spell.Name} ({tierLabel}) empowers your strike for {total} total damage.");
+        PushCombatLog($"Weapon raw {rawDamage} - armor {armorMitigation} | Crit {smiteCritThreshold}+{(crit ? " | CRIT x2" : string.Empty)}.");
+        PushCombatLog($"Spell rider raw {spellRawDamage} (stat +{spellStatPower}) - armor {spellArmorMitigation}.");
+        if (markBonus > 0)
+        {
+            PushCombatLog($"Marked target suffers +{markBonus} bonus damage.");
+        }
+
+        foreach (var statusMessage in ApplySpellOnHitStatuses(spell, route, _currentEnemy))
+        {
+            PushCombatLog(statusMessage);
+        }
+
+        if (_player.PoisonDamage > 0 && _currentEnemy.IsAlive)
+        {
+            TryApplyOrRefreshEnemyStatus(
+                _currentEnemy,
+                new CombatStatusApplySpec
+                {
+                    Kind = CombatStatusKind.Poison,
+                    Potency = _player.PoisonDamage,
+                    DurationTurns = 2
+                },
+                "poison_blade",
+                "Poison Blade",
+                null,
+                out var poisonMessage);
+            if (!string.IsNullOrWhiteSpace(poisonMessage))
+            {
+                PushCombatLog(poisonMessage);
+            }
+        }
+
+        if (_currentEnemy.IsAlive &&
+            string.Equals(spell.Id, "paladin_thunderous_smite", StringComparison.Ordinal) &&
+            TryPushEnemyAwayFromPoint(_currentEnemy, _player.X, _player.Y, 2, out var pushedTiles))
+        {
+            PushCombatLog($"{_currentEnemy.Type.Name} is blasted back {pushedTiles} tile(s).");
+        }
+
+        PushCombatLog($"{_currentEnemy.Type.Name} HP {_currentEnemy.CurrentHp}/{_currentEnemy.Type.MaxHp}.");
+        ApplyRelicMeleeTrigger();
+        return true;
+    }
+
+    private string GetActiveConcentrationSummary()
+    {
+        if (string.IsNullOrWhiteSpace(_activeConcentrationSpellId))
+        {
+            return "Concentration: none";
+        }
+
+        return $"Concentration: {_activeConcentrationLabel} ({Math.Max(0, _activeConcentrationRemainingRounds)}r)";
     }
 
     private void BeginCombatMoveMode()
@@ -5368,6 +6595,7 @@ public sealed class Game : IDisposable
         _player.Y = targetY;
         _playerRunAnimUntil = Raylib.GetTime() + 0.14;
         _combatMovePointsRemaining = Math.Max(0, _combatMovePointsRemaining - 1);
+        SyncFollowingCombatHazardsToPlayer();
         SyncEncounterTargetSelection(preferCurrentEnemy: true);
 
         if (_combatMovePointsRemaining <= 0)
@@ -5388,10 +6616,57 @@ public sealed class Game : IDisposable
             skills.Add("second_wind");
         }
 
-        if (_player.HasSkill("mana_shield") && _player.CurrentMana >= 3)
+        if (_player.HasSkill("mana_shield") && !_arcaneWardUsedThisCombat)
         {
             skills.Add("mana_shield");
         }
+
+        if (_player.HasSkill("channel_divinity") && !_channelDivinityUsedThisCombat)
+        {
+            skills.Add("channel_divinity");
+        }
+
+        if (_player.HasSkill("cutting_words") && !_cuttingWordsUsedThisCombat)
+        {
+            skills.Add("cutting_words");
+        }
+
+        if (_player.HasSkill("lay_on_hands") && !_layOnHandsUsedThisCombat)
+        {
+            skills.Add("lay_on_hands");
+        }
+
+        // Phase B active feat actions
+        if (_player.HasFeat("warrior_battle_cry_feat") && !_battleCryUsedThisCombat)
+            skills.Add("warrior_battle_cry_feat");
+        if (_player.HasFeat("rogue_vanish_feat") && !_vanishUsedThisCombat)
+            skills.Add("rogue_vanish_feat");
+        if (_player.HasFeat("paladin_divine_smite_feat") && !_divineSmiteUsedThisCombat && _player.GetSpellSlots(1) > 0)
+            skills.Add("paladin_divine_smite_feat");
+        if (_player.HasFeat("paladin_divine_favor_feat") && !_divineFavorUsedThisCombat)
+            skills.Add("paladin_divine_favor_feat");
+        if (_player.HasFeat("mage_empower_spell_feat") && !_empowerSpellUsedThisCombat)
+            skills.Add("mage_empower_spell_feat");
+        if (_player.HasFeat("cleric_word_of_renewal_feat") && !_wordOfRenewalUsedThisCombat && _player.GetSpellSlots(1) < _player.GetSpellSlotsMax(1))
+            skills.Add("cleric_word_of_renewal_feat");
+
+        // D&D active feats (prime-based once/combat)
+        if (_player.HasFeat("lucky_feat") && !_luckyUsedThisCombat)
+            skills.Add("lucky_feat");
+        if (_player.HasFeat("mage_metamagic_feat") && !_metamagicUsedThisCombat)
+            skills.Add("mage_metamagic_feat");
+        if (_player.HasFeat("ranger_sharpshooter_feat") && !_sharpshooterUsedThisCombat)
+            skills.Add("ranger_sharpshooter_feat");
+
+        // Phase C active feats (prime-based once/combat)
+        if (_player.HasFeat("barbarian_reckless_attack_feat") && !_recklessAttackUsedThisCombat)
+            skills.Add("barbarian_reckless_attack_feat");
+        if (_player.HasFeat("mage_overchannel_feat") && !_overchannelUsedThisCombat)
+            skills.Add("mage_overchannel_feat");
+        if (_player.HasFeat("cleric_spiritual_weapon_feat") && !_spiritualWeaponUsedThisCombat)
+            skills.Add("cleric_spiritual_weapon_feat");
+        if (_player.HasFeat("bard_bardic_inspiration_feat") && !_bardicInspirationUsedThisCombat)
+            skills.Add("bard_bardic_inspiration_feat");
 
         return skills;
     }
@@ -5409,6 +6684,7 @@ public sealed class Game : IDisposable
         if (GetCombatSkills().Count == 0) return;
         ClearPendingCombatSpell();
         _selectedCombatSkillIndex = 0;
+        _combatSkillMenuOffset = 0;
         _gameState = GameState.CombatSkillMenu;
     }
 
@@ -5440,15 +6716,17 @@ public sealed class Game : IDisposable
             return;
         }
 
-        if (Pressed(KeyUp))
+        if (PressedOrRepeat(KeyUp))
         {
             _selectedCombatSkillIndex = (_selectedCombatSkillIndex - 1 + skills.Count) % skills.Count;
+            EnsureCombatSkillSelectionVisible(skills.Count);
             return;
         }
 
-        if (Pressed(KeyDown))
+        if (PressedOrRepeat(KeyDown))
         {
             _selectedCombatSkillIndex = (_selectedCombatSkillIndex + 1) % skills.Count;
+            EnsureCombatSkillSelectionVisible(skills.Count);
             return;
         }
 
@@ -5473,7 +6751,55 @@ public sealed class Game : IDisposable
                 DoSecondWind();
                 return;
             case "mana_shield":
-                DoManaShield();
+                DoArcaneWard();
+                return;
+            case "channel_divinity":
+                DoChannelDivinity();
+                return;
+            case "cutting_words":
+                DoCuttingWords();
+                return;
+            case "lay_on_hands":
+                DoLayOnHands();
+                return;
+            case "warrior_battle_cry_feat":
+                DoBattleCry();
+                return;
+            case "rogue_vanish_feat":
+                DoVanish();
+                return;
+            case "paladin_divine_smite_feat":
+                DoDivineSmite();
+                return;
+            case "paladin_divine_favor_feat":
+                DoDivineFavor();
+                return;
+            case "mage_empower_spell_feat":
+                DoEmpowerSpell();
+                return;
+            case "cleric_word_of_renewal_feat":
+                DoWordOfRenewal();
+                return;
+            case "lucky_feat":
+                DoLucky();
+                return;
+            case "mage_metamagic_feat":
+                DoMetamagic();
+                return;
+            case "ranger_sharpshooter_feat":
+                DoSharpshooter();
+                return;
+            case "barbarian_reckless_attack_feat":
+                DoRecklessAttack();
+                return;
+            case "mage_overchannel_feat":
+                DoOverchannel();
+                return;
+            case "cleric_spiritual_weapon_feat":
+                DoSpiritualWeapon();
+                return;
+            case "bard_bardic_inspiration_feat":
+                DoBardicInspiration();
                 return;
             default:
                 PushCombatLog("That skill is not available.");
@@ -5485,26 +6811,37 @@ public sealed class Game : IDisposable
     private void OpenCombatSpellMenu()
     {
         if (_player == null) return;
-        if (_player.GetKnownSpells().Count == 0) return;
+        if (_activeTransformation != null)
+        {
+            RevertTransformation("You dismiss your form, returning to normal.");
+            EndActiveConcentration("Transformation dismissed.");
+            return;
+        }
+        var knownSpells = _player.GetKnownSpells();
+        if (knownSpells.Count == 0) return;
         ClearPendingCombatSpell();
-        _selectedSpellIndex = 0;
-        _spellMenuOffset = 0;
+        _selectedSpellIndex = Math.Clamp(_selectedSpellIndex, 0, knownSpells.Count - 1);
+        EnsureSpellSelectionVisible(knownSpells.Count);
         _gameState = GameState.CombatSpellMenu;
     }
 
     private void OpenCombatItemMenu()
     {
         if (_player == null) return;
-        if (GetCombatConsumables().Count == 0) return;
+        var items = GetCombatConsumables();
+        if (items.Count == 0) return;
         ClearPendingCombatSpell();
-        _selectedCombatItemIndex = 0;
-        _combatItemMenuOffset = 0;
+        _selectedCombatItemIndex = Math.Clamp(_selectedCombatItemIndex, 0, items.Count - 1);
+        EnsureCombatItemSelectionVisible(items.Count);
         _gameState = GameState.CombatItemMenu;
     }
 
     private void ClearPendingCombatSpell()
     {
         _pendingCombatSpellId = string.Empty;
+        _pendingCombatSpellVariantIndex = 0;
+        _combatSpellTargetCursorX = -1;
+        _combatSpellTargetCursorY = -1;
     }
 
     private bool TryGetPendingCombatSpell(out SpellDefinition spell)
@@ -5560,14 +6897,14 @@ public sealed class Game : IDisposable
             return;
         }
 
-        if (Pressed(KeyUp))
+        if (PressedOrRepeat(KeyUp))
         {
             _selectedSpellIndex = (_selectedSpellIndex - 1 + spells.Count) % spells.Count;
             EnsureSpellSelectionVisible(spells.Count);
             return;
         }
 
-        if (Pressed(KeyDown))
+        if (PressedOrRepeat(KeyDown))
         {
             _selectedSpellIndex = (_selectedSpellIndex + 1) % spells.Count;
             EnsureSpellSelectionVisible(spells.Count);
@@ -5578,7 +6915,29 @@ public sealed class Game : IDisposable
 
         var chosenSpell = spells[Math.Min(_selectedSpellIndex, spells.Count - 1)];
         _pendingCombatSpellId = chosenSpell.Id;
+        _pendingCombatSpellVariantIndex = 0;
+        ResetPendingCombatSpellVariant(chosenSpell);
+        PrimeCombatSpellTargeting(chosenSpell);
         _gameState = GameState.CombatSpellTargeting;
+    }
+
+    private void HandleFormSelectionInput()
+    {
+        if (Pressed(KeyUp)) _formSelectionIndex = Math.Max(0, _formSelectionIndex - 1);
+        if (Pressed(KeyDown)) _formSelectionIndex = Math.Min(_pendingFormOptions.Length - 1, _formSelectionIndex + 1);
+
+        if (Pressed(KeyEnter))
+        {
+            var formId = _pendingFormOptions[_formSelectionIndex];
+            var spell = SpellData.ById[_pendingFormSpellId];
+            var route = SpellData.ResolveEffectRoute(spell);
+            ActivateTransformation(spell, route, formId);
+        }
+
+        if (Pressed(KeyEscape))
+        {
+            _gameState = GameState.CombatSpellMenu;
+        }
     }
 
     private void HandleCombatSpellTargetingInput()
@@ -5610,13 +6969,36 @@ public sealed class Game : IDisposable
             return;
         }
 
-        if (Pressed(KeyLeft))
+        if (SpellSupportsVariantSelection(pendingSpell))
+        {
+            if (PressedOrRepeat(KeyUp))
+            {
+                CyclePendingCombatSpellVariant(pendingSpell, -1);
+                return;
+            }
+
+            if (PressedOrRepeat(KeyDown))
+            {
+                CyclePendingCombatSpellVariant(pendingSpell, 1);
+                return;
+            }
+        }
+
+        if (UsesFreeTileSpellTargeting(pendingSpell))
+        {
+            if (TryGetMoveDelta(out var moveX, out var moveY))
+            {
+                TryMoveCombatSpellTargetCursor(moveX, moveY);
+                return;
+            }
+        }
+        else if (PressedOrRepeat(KeyLeft))
         {
             CycleEncounterTarget(-1);
             return;
         }
 
-        if (Pressed(KeyRight))
+        if (!UsesFreeTileSpellTargeting(pendingSpell) && PressedOrRepeat(KeyRight))
         {
             CycleEncounterTarget(1);
             return;
@@ -5624,10 +7006,10 @@ public sealed class Game : IDisposable
 
         if (!Pressed(KeyEnter)) return;
 
-        var spellValidation = ValidateCurrentEnemyTargetForSpell(pendingSpell);
+        var spellValidation = ValidateCombatSpellAim(pendingSpell);
         if (!spellValidation.IsLegal)
         {
-            PushCombatLog($"{pendingSpell.Name} blocked: {spellValidation.BuildBlockedReason()}");
+            PushCombatLog($"{pendingSpell.Name} blocked: {spellValidation.BlockedReason}");
             return;
         }
 
@@ -5665,14 +7047,14 @@ public sealed class Game : IDisposable
             return;
         }
 
-        if (Pressed(KeyUp))
+        if (PressedOrRepeat(KeyUp))
         {
             _selectedCombatItemIndex = (_selectedCombatItemIndex - 1 + items.Count) % items.Count;
             EnsureCombatItemSelectionVisible(items.Count);
             return;
         }
 
-        if (Pressed(KeyDown))
+        if (PressedOrRepeat(KeyDown))
         {
             _selectedCombatItemIndex = (_selectedCombatItemIndex + 1) % items.Count;
             EnsureCombatItemSelectionVisible(items.Count);
@@ -5742,32 +7124,26 @@ public sealed class Game : IDisposable
                 turnConsumed = true;
                 return true;
             }
-            case "mana_draught":
+            case "healing_draught":
             {
-                if (_player.MaxMana <= 0)
+                if (_player.CurrentHp >= _player.MaxHp)
                 {
-                    resultMessage = $"{_player.CharacterClass.Name} has no mana pool.";
+                    resultMessage = "HP is already full.";
                     return false;
                 }
 
-                if (_player.CurrentMana >= _player.MaxMana)
-                {
-                    resultMessage = "MP is already full.";
-                    return false;
-                }
-
-                var restoreAmount = Math.Max(4, (int)Math.Ceiling(_player.MaxMana * 0.35));
-                var before = _player.CurrentMana;
-                _player.CurrentMana = Math.Min(_player.MaxMana, _player.CurrentMana + restoreAmount);
-                var gained = _player.CurrentMana - before;
+                var restoreAmount = Math.Max(4, (int)Math.Ceiling(_player.MaxHp * 0.35));
+                var before = _player.CurrentHp;
+                _player.CurrentHp = Math.Min(_player.MaxHp, _player.CurrentHp + restoreAmount);
+                var gained = _player.CurrentHp - before;
                 if (gained <= 0)
                 {
-                    resultMessage = "Mana Draught had no effect.";
+                    resultMessage = "Healing Draught had no effect.";
                     return false;
                 }
 
                 item.Quantity -= 1;
-                resultMessage = $"Used {item.Name}: MP +{gained} ({item.Quantity} left).";
+                resultMessage = $"Used {item.Name}: HP +{gained} ({item.Quantity} left).";
                 turnConsumed = true;
                 return true;
             }
@@ -5777,20 +7153,755 @@ public sealed class Game : IDisposable
                 resultMessage = "Sharpening Oil applied: +1 run melee damage.";
                 turnConsumed = true;
                 return true;
+            case "antidote_vial":
+            {
+                var poisoned = _playerConditions.FirstOrDefault(c => c.Kind == PlayerConditionKind.Poisoned);
+                if (poisoned == null)
+                {
+                    resultMessage = "You are not poisoned.";
+                    return false;
+                }
+                _playerConditions.Remove(poisoned);
+                item.Quantity -= 1;
+                resultMessage = $"Used {item.Name}: Poison cured! ({item.Quantity} left).";
+                turnConsumed = true;
+                return true;
+            }
+            case "smoke_bomb":
+                item.Quantity -= 1;
+                _runFleeBonus += 15;
+                resultMessage = $"Used {item.Name}: +15% flee chance for this run. ({item.Quantity} left).";
+                turnConsumed = true;
+                return true;
             default:
                 resultMessage = $"{item.Name} has no combat effect configured.";
                 return false;
         }
     }
 
+    private void StartSpellConcentration(SpellDefinition spell, SpellEffectRouteSpec route)
+    {
+        if (!route.RequiresConcentration)
+        {
+            return;
+        }
+
+        if (!string.IsNullOrWhiteSpace(_activeConcentrationSpellId))
+        {
+            EndActiveConcentration($"Concentration on {_activeConcentrationLabel} ends.");
+        }
+
+        var initialRounds = route.HazardSpec?.DurationRounds ?? Math.Max(2, spell.SpellLevel + 1);
+        _activeConcentrationSpellId = spell.Id;
+        _activeConcentrationLabel = spell.Name;
+        _activeConcentrationRemainingRounds = initialRounds;
+        PushCombatLog($"You begin concentrating on {spell.Name} ({initialRounds} round(s)).");
+    }
+
+    private void EndActiveConcentration(string reason, bool logMessage = true)
+    {
+        if (string.IsNullOrWhiteSpace(_activeConcentrationSpellId))
+        {
+            return;
+        }
+
+        var spellId = _activeConcentrationSpellId;
+        var spellLabel = _activeConcentrationLabel;
+        _activeConcentrationSpellId = string.Empty;
+        _activeConcentrationLabel = string.Empty;
+        _activeConcentrationRemainingRounds = 0;
+
+        // Clear weapon rider / self-buff flags tied to this concentration
+        switch (spellId)
+        {
+            case "paladin_magic_weapon":
+                _magicWeaponActive = false;
+                _runMeleeBonus = Math.Max(0, _runMeleeBonus - 1);
+                break;
+            case "ranger_flame_arrows":
+                _flameArrowsActive = false;
+                break;
+            case "paladin_crusaders_mantle":
+                _crusadersMantleActive = false;
+                _runDefenseBonus = Math.Max(0, _runDefenseBonus - 1);
+                break;
+            case "ranger_zephyr_strike":
+                _zephyrStrikeActive = false;
+                _zephyrStrikeHitPrimed = false;
+                _runFleeBonus = Math.Max(0, _runFleeBonus - 10);
+                break;
+            case "paladin_divine_favor":
+                _divineFavorActive = false;
+                break;
+            case "cleric_shield_of_faith":
+            case "paladin_shield_of_faith":
+                _shieldOfFaithActive = false;
+                _runDefenseBonus = Math.Max(0, _runDefenseBonus - 2);
+                break;
+            case "cleric_bless":
+                _blessActive = false;
+                break;
+            case "paladin_heroism":
+            case "bard_heroism":
+                _heroismActive = false;
+                _playerTempHp = 0;
+                break;
+            case "ranger_barkskin":
+                _barkskinActive = false;
+                break;
+            case "mage_blur":
+                _blurActive = false;
+                break;
+            case "mage_haste":
+                _hasteActive = false;
+                _runDefenseBonus = Math.Max(0, _runDefenseBonus - 2);
+                _combatMovePointsMax = Math.Max(1, _combatMovePointsMax - 2);
+                break;
+            // Batch 2 — Tactical combat spells
+            case "mage_expeditious_retreat":
+                _expeditiousRetreatActive = false;
+                _runFleeBonus = Math.Max(0, _runFleeBonus - 15);
+                break;
+            case "ranger_longstrider":
+                _longstriderActive = false;
+                _combatMovePointsMax = Math.Max(1, _combatMovePointsMax - 2);
+                break;
+            case "bard_hex":
+                _hexActive = false;
+                break;
+            case "cleric_protection_evg":
+            case "paladin_protection_evg":
+                _protFromEvilActive = false;
+                _runDefenseBonus = Math.Max(0, _runDefenseBonus - 1);
+                break;
+            case "cleric_sanctuary":
+                _sanctuaryActive = false;
+                break;
+            case "paladin_compelled_duel":
+                _compelledDuelActive = false;
+                _runMeleeBonus = Math.Max(0, _runMeleeBonus - 2);
+                break;
+            case "bard_enhance_ability":
+            case "cleric_enhance_ability":
+            case "mage_enhance_ability":
+                _enhanceAbilityActive = false;
+                _runDefenseBonus = Math.Max(0, _runDefenseBonus - 2);
+                _runFleeBonus = Math.Max(0, _runFleeBonus - 3);
+                break;
+            // Batch 3 concentration cleanup
+            case "cleric_spirit_shroud":
+                _spiritShroudActive = false;
+                break;
+            case "ranger_thorns":
+                _thornsActive = false;
+                break;
+            case "ranger_stoneskin":
+            case "mage_stoneskin":
+                _stoneskinActive = false;
+                break;
+            case "bard_greater_invisibility":
+                _greaterInvisibilityActive = false;
+                break;
+            // Batch 4+5 concentration cleanup
+            case "bard_invisibility":
+                _invisibilityActive = false;
+                break;
+            case "paladin_elemental_weapon":
+                _elementalWeaponActive = false;
+                _elementalWeaponElement = string.Empty;
+                break;
+            case "mage_blink":
+                _blinkActive = false;
+                break;
+            case "mage_protection_from_energy":
+                _protEnergyActive = false;
+                _protEnergyElement = string.Empty;
+                break;
+            case "cleric_beacon_of_hope":
+                _beaconOfHopeActive = false;
+                break;
+            case "bard_major_image":
+                _majorImageActive = false;
+                break;
+            case "paladin_aura_of_courage":
+                _auraOfCourageActive = false;
+                break;
+        }
+
+        // Clean up any summon tied to this concentration
+        if (_activeSummon != null && _activeSummon.Type.RequiresConcentration
+            && _activeSummon.Type.SourceSpellId == spellId)
+        {
+            if (_activeSummon.Type.Behavior == SummonBehaviorKind.BuffMount)
+            {
+                _runDefenseBonus = Math.Max(0, _runDefenseBonus - 2);
+                _runFleeBonus = Math.Max(0, _runFleeBonus - 15);
+            }
+            PushCombatLog($"{_activeSummon.Type.Name} vanishes.");
+            _activeSummon = null;
+        }
+
+        // Clean up transformation tied to this concentration
+        if (_activeTransformation != null && _activeTransformation.SourceSpellId == spellId)
+        {
+            RevertTransformation($"{_activeTransformation.Form.Name} reverts.");
+        }
+
+        ClearEffectsFromSpellSource(spellId);
+        if (logMessage)
+        {
+            PushCombatLog(string.IsNullOrWhiteSpace(reason)
+                ? $"{spellLabel} concentration ends."
+                : reason);
+        }
+    }
+
+    private void ClearEffectsFromSpellSource(string spellId)
+    {
+        if (string.IsNullOrWhiteSpace(spellId))
+        {
+            return;
+        }
+
+        _activeCombatHazards.RemoveAll(hazard =>
+            string.Equals(hazard.SourceSpellId, spellId, StringComparison.Ordinal));
+
+        foreach (var enemy in _enemies)
+        {
+            enemy.StatusEffects.RemoveAll(status =>
+                string.Equals(status.SourceSpellId, spellId, StringComparison.Ordinal));
+        }
+    }
+
+    private void ActivateTransformation(SpellDefinition spell, SpellEffectRouteSpec route, string formId, bool milestoneSlotWaive = false)
+    {
+        if (!SpellData.Forms.TryGetValue(formId, out var form))
+        {
+            PushCombatLog($"{spell.Name}: form not found.");
+            if (!spell.SuppressCounterAttack) DoEnemyAttack();
+            return;
+        }
+
+        // End existing transformation if any
+        if (_activeTransformation != null)
+            RevertTransformation("Your previous form dissolves.");
+
+        _activeTransformation = new TransformationInstance
+        {
+            Form = form,
+            SourceSpellId = spell.Id,
+            TempHpRemaining = form.TempHp,
+            FirstHitPrimed = form.Special == FormSpecialKind.FirstHitBonus
+        };
+
+        // Apply passive bonuses
+        if (form.Special == FormSpecialKind.DefenseBonus)
+            _runDefenseBonus += form.SpecialValue;
+        if (form.Special == FormSpecialKind.FleeBonus)
+            _runFleeBonus += form.SpecialValue;
+        if (form.Special == FormSpecialKind.Evasion)
+            _runFleeBonus += form.SpecialValue;
+
+        StartSpellConcentration(spell, route);
+        PushCombatLog($"{spell.Name}: You transform into a {form.Name}! ({form.TempHp} temp HP)");
+        PushCombatLog($"  AC {form.FormAC} | ATK +{form.AttackBonus} | {form.DamageCount}d{form.DamageDice}+{form.DamageBonus} {form.DamageType}");
+        if (!form.CanAttack) PushCombatLog("  You cannot attack in this form.");
+
+        if (spell.RequiresSlot && !milestoneSlotWaive)
+            PushCombatLog($"L{spell.SpellLevel} slots {_player!.GetSpellSlots(spell.SpellLevel)}/{_player.GetSpellSlotsMax(spell.SpellLevel)}.");
+
+        _gameState = GameState.Combat;
+        if (!spell.SuppressCounterAttack) DoEnemyAttack();
+    }
+
+    private void RevertTransformation(string reason)
+    {
+        if (_activeTransformation == null) return;
+
+        var form = _activeTransformation.Form;
+
+        // Revert passive bonuses
+        if (form.Special == FormSpecialKind.DefenseBonus)
+            _runDefenseBonus = Math.Max(0, _runDefenseBonus - form.SpecialValue);
+        if (form.Special == FormSpecialKind.FleeBonus)
+            _runFleeBonus = Math.Max(0, _runFleeBonus - form.SpecialValue);
+        if (form.Special == FormSpecialKind.Evasion)
+            _runFleeBonus = Math.Max(0, _runFleeBonus - form.SpecialValue);
+
+        PushCombatLog(reason);
+        _activeTransformation = null;
+    }
+
+    private void ApplyPlayerCondition(PlayerConditionKind kind, int potency, int duration)
+    {
+        // Aura of Courage: reduce incoming condition duration by 1 (min 1)
+        if (_auraOfCourageActive)
+            duration = Math.Max(1, duration - 1);
+
+        var existing = _playerConditions.FirstOrDefault(c => c.Kind == kind);
+        if (existing != null)
+        {
+            existing.Potency = Math.Max(existing.Potency, potency);
+            existing.RemainingTurns = Math.Max(existing.RemainingTurns, duration);
+        }
+        else
+        {
+            _playerConditions.Add(new PlayerConditionState { Kind = kind, Potency = potency, RemainingTurns = duration });
+        }
+    }
+
+    private void AdvancePlayerConditions()
+    {
+        for (var i = _playerConditions.Count - 1; i >= 0; i--)
+        {
+            var cond = _playerConditions[i];
+            if (cond.Kind == PlayerConditionKind.Poisoned && _player != null)
+            {
+                _player.CurrentHp = Math.Max(0, _player.CurrentHp - cond.Potency);
+                PushCombatLog($"Poison deals {cond.Potency} damage. HP {_player.CurrentHp}/{_player.MaxHp}.");
+                TryResolveConcentrationAfterDamage(cond.Potency, "Poison");
+            }
+            else if (cond.Kind == PlayerConditionKind.Weakened)
+            {
+                if (cond.RemainingTurns == cond.RemainingTurns) // always log on first call — fires each tick
+                {
+                    PushCombatLog("You feel weakened. (−2 to attack rolls)");
+                }
+            }
+            cond.RemainingTurns--;
+            if (cond.RemainingTurns <= 0)
+            {
+                PushCombatLog($"{cond.Kind} fades.");
+                _playerConditions.RemoveAt(i);
+            }
+        }
+    }
+
+    private int GetPlayerConditionAttackPenalty()
+    {
+        return -2 * _playerConditions.Count(c => c.Kind == PlayerConditionKind.Weakened);
+    }
+
+    private void AdvanceConcentrationRound()
+    {
+        if (string.IsNullOrWhiteSpace(_activeConcentrationSpellId))
+        {
+            return;
+        }
+
+        _activeConcentrationRemainingRounds = Math.Max(0, _activeConcentrationRemainingRounds - 1);
+        if (_activeConcentrationRemainingRounds > 0)
+        {
+            return;
+        }
+
+        EndActiveConcentration($"{_activeConcentrationLabel} fades as the fight drags on.");
+    }
+
+    private void TryResolveConcentrationAfterDamage(int damage, string source)
+    {
+        if (_player == null || damage <= 0 || string.IsNullOrWhiteSpace(_activeConcentrationSpellId))
+        {
+            return;
+        }
+
+        var dc = Math.Max(10, damage / 2);
+        var conMod = _player.Mod(StatName.Constitution);
+        var blessSaveBonus = _blessActive ? _rng.Next(1, 5) : 0;
+        var rawRoll1 = _rng.Next(1, 21);
+        int roll;
+        if (_player.HasFeat("war_caster_feat"))
+        {
+            var rawRoll2 = _rng.Next(1, 21);
+            var betterRaw = Math.Max(rawRoll1, rawRoll2);
+            roll = betterRaw + conMod + blessSaveBonus;
+            PushCombatLog($"War Caster — concentration rolls {rawRoll1 + conMod + blessSaveBonus} and {rawRoll2 + conMod + blessSaveBonus}, keeps higher ({roll}).");
+        }
+        else
+        {
+            roll = rawRoll1 + conMod + blessSaveBonus;
+        }
+        if (blessSaveBonus > 0)
+            PushCombatLog($"Bless — +{blessSaveBonus} to concentration save.");
+        if (roll >= dc)
+        {
+            PushCombatLog($"Concentration check {roll} vs DC {dc}: {source} does not break {_activeConcentrationLabel}.");
+            return;
+        }
+
+        EndActiveConcentration($"Concentration broken by {source} ({roll} vs DC {dc}).");
+    }
+
+    private CombatHazardState CreateCombatHazardState(SpellDefinition spell, SpellEffectRouteSpec route, int centerX, int centerY)
+    {
+        var hazardSpec = route.HazardSpec!;
+        var state = new CombatHazardState
+        {
+            InstanceId = $"hazard_{Guid.NewGuid():N}",
+            SourceSpellId = spell.Id,
+            SourceLabel = spell.Name,
+            Element = route.Element,
+            BaseDamage = spell.BaseDamage,
+            Variance = spell.Variance,
+            ArmorBypass = spell.ArmorBypass + (_player?.SpellArmorBypassBonus ?? 0),
+            CenterX = centerX,
+            CenterY = centerY,
+            RadiusTiles = Math.Max(0, hazardSpec.RadiusTiles),
+            RemainingRounds = Math.Max(1, hazardSpec.DurationRounds),
+            FollowsPlayer = hazardSpec.FollowsPlayer,
+            RequiresConcentration = route.RequiresConcentration || hazardSpec.RequiresConcentration,
+            TriggersOnTurnStart = hazardSpec.TriggersOnTurnStart,
+            TriggersOnEntry = hazardSpec.TriggersOnEntry,
+            InitialSaveStat = hazardSpec.InitialSaveStat,
+            SaveDamageBehavior = hazardSpec.SaveDamageBehavior
+        };
+
+        foreach (var status in hazardSpec.OnTriggerStatuses)
+        {
+            state.OnTriggerStatuses.Add(new CombatStatusApplySpec
+            {
+                Kind = status.Kind,
+                Potency = status.Potency,
+                DurationTurns = status.DurationTurns,
+                ChancePercent = status.ChancePercent,
+                InitialSaveStat = status.InitialSaveStat,
+                RepeatSaveStat = status.RepeatSaveStat,
+                BreaksOnDamageTaken = status.BreaksOnDamageTaken
+            });
+        }
+
+        return state;
+    }
+
+    private void PlaceCombatHazard(SpellDefinition spell, SpellEffectRouteSpec route)
+    {
+        if (_player == null || route.HazardSpec == null)
+        {
+            return;
+        }
+
+        var (centerX, centerY) = ResolveSpellAnchorTile(spell);
+        var hazard = CreateCombatHazardState(spell, route, centerX, centerY);
+        _activeCombatHazards.Add(hazard);
+        PushCombatLog($"{spell.Name} creates a hazard at {centerX},{centerY} for {hazard.RemainingRounds} round(s).");
+    }
+
+    private void SyncFollowingCombatHazardsToPlayer()
+    {
+        if (_player == null)
+        {
+            return;
+        }
+
+        foreach (var hazard in _activeCombatHazards.Where(hazard => hazard.FollowsPlayer))
+        {
+            hazard.CenterX = _player.X;
+            hazard.CenterY = _player.Y;
+        }
+    }
+
+    private void AdvanceCombatHazardDurations()
+    {
+        for (var i = _activeCombatHazards.Count - 1; i >= 0; i--)
+        {
+            var hazard = _activeCombatHazards[i];
+            hazard.RemainingRounds -= 1;
+            if (hazard.RemainingRounds > 0)
+            {
+                continue;
+            }
+
+            PushCombatLog($"{hazard.SourceLabel} dissipates.");
+            _activeCombatHazards.RemoveAt(i);
+        }
+    }
+
+    private bool TryResolveCombatHazardDamageSaveOutcome(
+        CombatHazardState hazard,
+        Enemy enemy,
+        StatName scalingStat,
+        out string message,
+        out int damageNumerator,
+        out int damageDenominator,
+        out bool skipStatuses)
+    {
+        message = string.Empty;
+        damageNumerator = 1;
+        damageDenominator = 1;
+        skipStatuses = false;
+        if (!hazard.InitialSaveStat.HasValue || hazard.SaveDamageBehavior == SpellSaveDamageBehavior.None)
+        {
+            return false;
+        }
+
+        var saveStat = hazard.InitialSaveStat.Value;
+        var saved = TryRollEnemySave(enemy, saveStat, scalingStat, out var rollTotal, out _, out var dc);
+        var saveLabel = GetStatShortLabel(saveStat);
+        if (!saved)
+        {
+            message = $"{enemy.Type.Name} fails the {saveLabel} save against {hazard.SourceLabel} ({rollTotal} vs DC {dc}).";
+            return true;
+        }
+
+        skipStatuses = true;
+        switch (hazard.SaveDamageBehavior)
+        {
+            case SpellSaveDamageBehavior.NegateOnSave:
+                damageNumerator = 0;
+                message = $"{enemy.Type.Name} resists {hazard.SourceLabel} ({saveLabel} save {rollTotal} vs DC {dc}) and takes no damage.";
+                break;
+            case SpellSaveDamageBehavior.HalfOnSave:
+                damageDenominator = 2;
+                message = $"{enemy.Type.Name} partially resists {hazard.SourceLabel} ({saveLabel} save {rollTotal} vs DC {dc}) and takes half damage.";
+                break;
+            default:
+                message = $"{enemy.Type.Name} resists {hazard.SourceLabel} ({saveLabel} save {rollTotal} vs DC {dc}).";
+                break;
+        }
+
+        return true;
+    }
+
+    private int ApplyCombatHazardDamageToEnemy(CombatHazardState hazard, Enemy enemy, out bool skipStatuses, out string saveMessage)
+    {
+        skipStatuses = false;
+        saveMessage = string.Empty;
+        if (_player == null)
+        {
+            return 0;
+        }
+
+        var scalingStat = SpellData.ById.TryGetValue(hazard.SourceSpellId, out var sourceSpell)
+            ? sourceSpell.ScalingStat
+            : StatName.Wisdom;
+        var damageNumerator = 1;
+        var damageDenominator = 1;
+        if (TryResolveCombatHazardDamageSaveOutcome(hazard, enemy, scalingStat, out saveMessage, out damageNumerator, out damageDenominator, out skipStatuses))
+        {
+        }
+        var (damage, _, _, _) = CalcSpellDamageAgainstEnemy(
+            enemy,
+            scalingStat,
+            hazard.BaseDamage + _player.SpellDamageBonus + GetClassSpellDamageBonus(_player) + _runSpellBonus + GetConditionSpellModifier(),
+            hazard.Variance,
+            hazard.ArmorBypass,
+            spellLevel: 1);
+        damage += GetEnemyIncomingDamageBonus(enemy);
+        if (damageNumerator == 0)
+        {
+            damage = 0;
+        }
+        else if (damageDenominator > 1)
+        {
+            damage = damage * damageNumerator / damageDenominator;
+        }
+        enemy.CurrentHp = Math.Max(0, enemy.CurrentHp - damage);
+        if (damage > 0)
+        {
+            TryBreakDamageSensitiveStatuses(enemy, hazard.SourceLabel);
+        }
+        return damage;
+    }
+
+    private bool IsEnemyInsideHazard(CombatHazardState hazard, Enemy enemy)
+    {
+        return EncounterTargetingRules.GetTileDistance(hazard.CenterX, hazard.CenterY, enemy.X, enemy.Y) <= hazard.RadiusTiles;
+    }
+
+    private void ApplyCombatHazardStatuses(CombatHazardState hazard, Enemy enemy)
+    {
+        foreach (var status in hazard.OnTriggerStatuses)
+        {
+            var scalingStat = SpellData.ById.TryGetValue(hazard.SourceSpellId, out var sourceSpell)
+                ? sourceSpell.ScalingStat
+                : (StatName?)null;
+            TryApplyOrRefreshEnemyStatus(enemy, status, hazard.SourceSpellId, hazard.SourceLabel, scalingStat, out var message);
+            if (!string.IsNullOrWhiteSpace(message))
+            {
+                PushCombatLog(message);
+            }
+        }
+    }
+
+    private bool ResolveEnemyStartOfTurnHazards(Enemy enemy)
+    {
+        foreach (var hazard in _activeCombatHazards.Where(hazard => hazard.TriggersOnTurnStart).ToList())
+        {
+            if (!IsEnemyInsideHazard(hazard, enemy))
+            {
+                continue;
+            }
+
+            var damage = ApplyCombatHazardDamageToEnemy(hazard, enemy, out var skipStatuses, out var saveMessage);
+            if (!string.IsNullOrWhiteSpace(saveMessage))
+            {
+                PushCombatLog(saveMessage);
+            }
+            if (damage > 0)
+            {
+                PushCombatLog($"{enemy.Type.Name} suffers {damage} from {hazard.SourceLabel}.");
+                PushCombatLog($"{enemy.Type.Name} HP {enemy.CurrentHp}/{enemy.Type.MaxHp}.");
+            }
+            if (!skipStatuses)
+            {
+                ApplyCombatHazardStatuses(hazard, enemy);
+            }
+            if (!enemy.IsAlive)
+            {
+                return false;
+            }
+        }
+
+        return enemy.IsAlive;
+    }
+
+    private void ResolveEnemyEntryHazards(Enemy enemy)
+    {
+        foreach (var hazard in _activeCombatHazards.Where(hazard => hazard.TriggersOnEntry).ToList())
+        {
+            if (!IsEnemyInsideHazard(hazard, enemy))
+            {
+                continue;
+            }
+
+            var damage = ApplyCombatHazardDamageToEnemy(hazard, enemy, out var skipStatuses, out var saveMessage);
+            if (!string.IsNullOrWhiteSpace(saveMessage))
+            {
+                PushCombatLog(saveMessage);
+            }
+            if (damage > 0)
+            {
+                PushCombatLog($"{enemy.Type.Name} crosses {hazard.SourceLabel} for {damage} damage.");
+                PushCombatLog($"{enemy.Type.Name} HP {enemy.CurrentHp}/{enemy.Type.MaxHp}.");
+            }
+            if (!skipStatuses)
+            {
+                ApplyCombatHazardStatuses(hazard, enemy);
+            }
+            if (!enemy.IsAlive)
+            {
+                return;
+            }
+        }
+    }
+
+    private bool ResolveEncounterEnemyDeathsImmediate()
+    {
+        if (_player == null)
+        {
+            return false;
+        }
+
+        var defeatedEnemies = _encounterEnemies
+            .Where(enemy => !enemy.IsAlive)
+            .Distinct()
+            .ToList();
+        if (defeatedEnemies.Count == 0)
+        {
+            return false;
+        }
+
+        var levelUpTriggered = false;
+        foreach (var defeatedEnemy in defeatedEnemies)
+        {
+            PushCombatLog($"{defeatedEnemy.Type.Name} collapses immediately.");
+            _phase3EnemiesDefeated += 1;
+            var baseXp = defeatedEnemy.Type.XpReward;
+            var xp = Math.Max(1, (int)Math.Round(baseXp * (100 + _phase3XpPercentMod) / 100.0, MidpointRounding.AwayFromZero));
+            PushCombatLog($"You gain {xp} XP.");
+            levelUpTriggered |= _player.GainXp(xp);
+            ApplyMilestoneExecutionRewardOnEnemyDefeat();
+            if (string.Equals(ResolveEnemyTypeKey(defeatedEnemy.Type), "goblin_general", StringComparison.Ordinal))
+            {
+                _bossDefeated = true;
+                PushCombatLog("The Goblin General is down. The sanctum trembles.");
+            }
+
+            SpawnGuaranteedLootDrop(defeatedEnemy);
+            _enemies = _enemies.Where(enemy => !ReferenceEquals(enemy, defeatedEnemy)).ToList();
+            _enemyAi.Remove(defeatedEnemy);
+            _enemyLootKits.Remove(defeatedEnemy);
+            _encounterEnemies.RemoveAll(enemy => ReferenceEquals(enemy, defeatedEnemy));
+            if (ReferenceEquals(_currentEnemy, defeatedEnemy))
+            {
+                _currentEnemy = null;
+            }
+        }
+
+        PruneEncounterTurnOrder();
+        SyncEncounterTargetSelection(preferCurrentEnemy: true);
+        _packEnemiesRemainingAfterCurrent = Math.Max(0, _encounterEnemies.Count(enemy =>
+            enemy.IsAlive &&
+            !ReferenceEquals(enemy, _currentEnemy)));
+
+        if (levelUpTriggered)
+        {
+            ResetEncounterContext();
+            _selectionMessage = string.Empty;
+            BeginLevelUpFlow();
+            return true;
+        }
+
+        if (_encounterEnemies.All(enemy => !enemy.IsAlive))
+        {
+            if (_bossDefeated)
+            {
+                _floorCleared = true;
+                PushCombatLog("All hostiles eliminated. Floor 1 cleared.");
+                ResetEncounterContext();
+                _gameState = GameState.VictoryScreen;
+                TryAutosaveCheckpoint("floor1_cleared");
+            }
+            else
+            {
+                ResetEncounterContext();
+                EnterPlayingState("combat_victory");
+            }
+
+            return true;
+        }
+
+        return false;
+    }
+
     private void CastCombatSpell(SpellDefinition spell)
     {
         if (_player == null || _currentEnemy == null || _gameState == GameState.DeathScreen) return;
-        var targetValidation = ValidateCurrentEnemyTargetForSpell(spell);
-        if (!targetValidation.IsLegal)
+        var route = SpellData.ResolveEffectRoute(spell);
+        if (route.IsFutureGated)
         {
-            PushCombatLog($"{spell.Name} blocked: {targetValidation.BuildBlockedReason()}");
+            var requirement = string.IsNullOrWhiteSpace(route.FutureRequirement)
+                ? "a later spell-engine pass"
+                : route.FutureRequirement;
+            PushCombatLog($"{spell.Name} is archived until {requirement} is implemented.");
             return;
+        }
+
+        var aimValidation = ValidateCombatSpellAim(spell);
+        if (!aimValidation.IsLegal)
+        {
+            PushCombatLog($"{spell.Name} blocked: {aimValidation.BlockedReason}");
+            return;
+        }
+
+        if (route.TargetShape != SpellTargetShape.SingleEnemy && route.HazardSpec == null)
+        {
+            var previewTargets = ResolveSpellAffectedEnemies(spell);
+            if (previewTargets.Count == 0)
+            {
+                PushCombatLog($"{spell.Name} blocked: no enemies are in the affected area.");
+                return;
+            }
+        }
+
+        if (IsEmpoweredMeleeSpell(spell))
+        {
+            var meleeValidation = ValidateCurrentEnemyTargetForMelee();
+            if (!meleeValidation.IsLegal)
+            {
+                PushCombatLog($"{spell.Name} requires a melee target: {meleeValidation.BuildBlockedReason()}");
+                return;
+            }
         }
 
         var milestoneSlotWaive = false;
@@ -5807,20 +7918,582 @@ public sealed class Game : IDisposable
             }
         }
 
+        var tierLabel = spell.IsCantrip ? "Cantrip" : $"L{spell.SpellLevel}";
+
+        // Healing spells bypass the enemy-damage pipeline entirely.
+        if (spell.IsHealSpell)
+        {
+            if (_player.CurrentHp >= _player.MaxHp)
+            {
+                PushCombatLog($"{spell.Name}: you are already at full health. Slot wasted.");
+                if (spell.RequiresSlot && !milestoneSlotWaive)
+                    PushCombatLog($"L{spell.SpellLevel} slots {_player.GetSpellSlots(spell.SpellLevel)}/{_player.GetSpellSlotsMax(spell.SpellLevel)}.");
+                if (!spell.SuppressCounterAttack) DoEnemyAttack();
+                return;
+            }
+
+            var statMod = _player.Mod(spell.ScalingStat);
+            var blessedHealerBonus = _player.HasSkill("blessed_healer") ? Math.Max(0, _player.Mod(StatName.Wisdom)) : 0;
+            var healBase = spell.BaseDamage + _rng.Next(spell.Variance + 1) + statMod + _player.HealingBonus + blessedHealerBonus;
+            var healAmount = Math.Max(1, healBase);
+            // Beacon of Hope: double the next heal and consume the bonus
+            if (_beaconOfHopeActive)
+            {
+                healAmount *= 2;
+                _beaconOfHopeActive = false;
+                PushCombatLog("Beacon of Hope amplifies the healing!");
+            }
+            var before = _player.CurrentHp;
+            _player.CurrentHp = Math.Min(_player.MaxHp, _player.CurrentHp + healAmount);
+            var restored = _player.CurrentHp - before;
+            PushCombatLog($"{spell.Name} ({tierLabel}) restores {restored} HP.");
+            PushCombatLog($"HP {before} -> {_player.CurrentHp}/{_player.MaxHp}.");
+            // Mass Healing Word: also cleanse one condition
+            if (string.Equals(spell.Id, "cleric_mass_healing_word", StringComparison.Ordinal) && _playerConditions.Count > 0)
+            {
+                var worst = _playerConditions.OrderByDescending(c => c.Potency).First();
+                _playerConditions.Remove(worst);
+                PushCombatLog($"Mass Healing Word also cleanses: {worst.Kind} removed.");
+            }
+            if (spell.RequiresSlot && !milestoneSlotWaive)
+                PushCombatLog($"L{spell.SpellLevel} slots {_player.GetSpellSlots(spell.SpellLevel)}/{_player.GetSpellSlotsMax(spell.SpellLevel)}.");
+            if (!spell.SuppressCounterAttack) DoEnemyAttack();
+            return;
+        }
+
+        // Concentration aura spells: start concentration, no immediate damage.
+        if (route.RouteKind == SpellEffectRouteKind.ConcentrationAura)
+        {
+            StartSpellConcentration(spell, route);
+            string auraMsg;
+            switch (spell.Id)
+            {
+                case "paladin_heroism":
+                case "bard_heroism":
+                    _heroismActive = true;
+                    var heroismPulse = Math.Max(1, _player.Mod(StatName.Charisma));
+                    _playerTempHp += heroismPulse;
+                    auraMsg = $"bravery fills you (+{heroismPulse} temp HP).";
+                    break;
+                default:
+                    auraMsg = "a healing aura surrounds you.";
+                    break;
+            }
+            PushCombatLog($"{spell.Name} ({tierLabel}): {auraMsg}");
+            if (spell.RequiresSlot && !milestoneSlotWaive)
+                PushCombatLog($"L{spell.SpellLevel} slots {_player.GetSpellSlots(spell.SpellLevel)}/{_player.GetSpellSlotsMax(spell.SpellLevel)}.");
+            if (!spell.SuppressCounterAttack) DoEnemyAttack();
+            return;
+        }
+
+        // Weapon rider spells: concentration-based per-hit damage buff.
+        if (route.RouteKind == SpellEffectRouteKind.WeaponRider)
+        {
+            StartSpellConcentration(spell, route);
+
+            switch (spell.Id)
+            {
+                case "paladin_magic_weapon":
+                    _magicWeaponActive = true;
+                    _runMeleeBonus += 1;
+                    break;
+                case "ranger_flame_arrows":
+                    _flameArrowsActive = true;
+                    break;
+                case "paladin_crusaders_mantle":
+                    _crusadersMantleActive = true;
+                    _runDefenseBonus += 1;
+                    break;
+                case "paladin_divine_favor":
+                    _divineFavorActive = true;
+                    break;
+                case "bard_hex":
+                    _hexActive = true;
+                    break;
+                case "paladin_elemental_weapon":
+                    _elementalWeaponActive = true;
+                    _elementalWeaponElement = GetSelectedPendingSpellVariantId(spell);
+                    if (string.IsNullOrWhiteSpace(_elementalWeaponElement)) _elementalWeaponElement = "fire";
+                    break;
+            }
+
+            PushCombatLog($"{spell.Name} ({tierLabel}): your weapon glows with power.");
+            if (spell.RequiresSlot && !milestoneSlotWaive)
+                PushCombatLog($"L{spell.SpellLevel} slots {_player.GetSpellSlots(spell.SpellLevel)}/{_player.GetSpellSlotsMax(spell.SpellLevel)}.");
+            if (!spell.SuppressCounterAttack) DoEnemyAttack();
+            return;
+        }
+
+        // Self-buff spells: stat/movement buff (some concentration, some persistent).
+        if (route.RouteKind == SpellEffectRouteKind.SelfBuff)
+        {
+            string selfBuffMsg;
+            switch (spell.Id)
+            {
+                case "ranger_zephyr_strike":
+                    StartSpellConcentration(spell, route);
+                    _zephyrStrikeActive = true;
+                    _zephyrStrikeHitPrimed = true;
+                    _runFleeBonus += 10;
+                    selfBuffMsg = "wind surges around you.";
+                    break;
+                case "cleric_shield_of_faith":
+                case "paladin_shield_of_faith":
+                    StartSpellConcentration(spell, route);
+                    _shieldOfFaithActive = true;
+                    _runDefenseBonus += 2;
+                    selfBuffMsg = "a shimmering field of divine energy grants +2 AC.";
+                    break;
+                case "cleric_bless":
+                    StartSpellConcentration(spell, route);
+                    _blessActive = true;
+                    selfBuffMsg = "divine favor guides your strikes and saves.";
+                    break;
+                case "mage_mage_armor":
+                {
+                    var armorCat = GetCurrentArmorCategory();
+                    if (armorCat != ArmorCategory.Unarmored)
+                    {
+                        PushCombatLog("Mage Armor has no effect while wearing armor.");
+                        if (spell.RequiresSlot) _player.RestoreSpellSlot(spell.SpellLevel);
+                        if (!spell.SuppressCounterAttack) DoEnemyAttack();
+                        return;
+                    }
+                    _mageArmorActive = true;
+                    _runDefenseBonus += 3;
+                    selfBuffMsg = "an invisible barrier of force surrounds you (+3 AC).";
+                    break;
+                }
+                case "mage_shield":
+                    _shieldSpellActive = true;
+                    _shieldSpellTurnsLeft = 1;
+                    _runDefenseBonus += 5;
+                    selfBuffMsg = "a shimmering shield of force appears (+5 AC, 1 turn).";
+                    break;
+                case "mage_false_life":
+                {
+                    var tempHpGain = _rng.Next(1, 5) + 4;
+                    _playerTempHp += tempHpGain;
+                    selfBuffMsg = $"necromantic energy bolsters you with {tempHpGain} temp HP.";
+                    break;
+                }
+                case "ranger_barkskin":
+                    StartSpellConcentration(spell, route);
+                    _barkskinActive = true;
+                    selfBuffMsg = "your skin hardens like bark (AC floor 16).";
+                    break;
+                case "cleric_aid":
+                case "paladin_aid":
+                    _aidMaxHpBonus += 5;
+                    _player.AdjustMaxHp(5);
+                    selfBuffMsg = $"bolstering energy grants +5 max HP ({_player.CurrentHp}/{_player.MaxHp}).";
+                    break;
+                case "mage_blur":
+                    StartSpellConcentration(spell, route);
+                    _blurActive = true;
+                    selfBuffMsg = "your form shimmers — enemies attack with disadvantage.";
+                    break;
+                case "mage_haste":
+                    StartSpellConcentration(spell, route);
+                    _hasteActive = true;
+                    _runDefenseBonus += 2;
+                    _combatMovePointsMax += 2;
+                    _combatMovePointsRemaining += 2;
+                    selfBuffMsg = "you surge with supernatural speed (+2 AC, +2 move).";
+                    break;
+                // Batch 2 — Tactical combat spells
+                case "mage_misty_step":
+                    _combatMovePointsRemaining += 3;
+                    selfBuffMsg = "you blink through the Weave — +3 move points this turn.";
+                    break;
+                case "mage_mirror_image":
+                    _mirrorImageCharges = 3;
+                    selfBuffMsg = "three illusory duplicates shimmer into being.";
+                    break;
+                case "mage_expeditious_retreat":
+                    StartSpellConcentration(spell, route);
+                    _expeditiousRetreatActive = true;
+                    _runFleeBonus += 15;
+                    selfBuffMsg = "arcane speed surges through you (+15% flee, concentration).";
+                    break;
+                case "ranger_absorb_elements":
+                    _absorbElementsCharged = true;
+                    selfBuffMsg = "elemental energy coalesces around your weapon (+1d6 on next hit).";
+                    break;
+                case "ranger_longstrider":
+                    StartSpellConcentration(spell, route);
+                    _longstriderActive = true;
+                    _combatMovePointsMax += 2;
+                    _combatMovePointsRemaining += 2;
+                    selfBuffMsg = "your stride lengthens (+2 move/turn, concentration).";
+                    break;
+                case "cleric_protection_evg":
+                case "paladin_protection_evg":
+                    StartSpellConcentration(spell, route);
+                    _protFromEvilActive = true;
+                    _runDefenseBonus += 1;
+                    selfBuffMsg = "a divine ward shields you (+1 AC, concentration).";
+                    break;
+                case "cleric_sanctuary":
+                    StartSpellConcentration(spell, route);
+                    _sanctuaryActive = true;
+                    selfBuffMsg = "a divine shield wards you — enemies must pass a Wisdom save to attack you (concentration).";
+                    break;
+                case "paladin_compelled_duel":
+                    StartSpellConcentration(spell, route);
+                    _compelledDuelActive = true;
+                    _runMeleeBonus += 2;
+                    selfBuffMsg = "divine challenge marks your foe (+2 melee, concentration).";
+                    break;
+                case "bard_enhance_ability":
+                case "cleric_enhance_ability":
+                case "mage_enhance_ability":
+                    StartSpellConcentration(spell, route);
+                    _enhanceAbilityActive = true;
+                    _runDefenseBonus += 2;
+                    _runFleeBonus += 3;
+                    selfBuffMsg = "cat-like grace enhances your reflexes (+2 AC, +3% flee, concentration).";
+                    break;
+                // Batch 3 — Reactive & retaliation spells
+                case "mage_hellish_rebuke":
+                    _hellishRebukePrimed = true;
+                    selfBuffMsg = "hellfire crackles around you — the next attacker will burn (2d6 fire).";
+                    break;
+                case "mage_armor_of_agathys":
+                    _armorOfAgathysTempHp = 8;
+                    selfBuffMsg = "frost armor encases you (+8 frost temp HP; attackers take 1d8 cold).";
+                    break;
+                case "mage_fire_shield":
+                    _fireShieldActive = true;
+                    selfBuffMsg = "flames wreathe your body — attackers will burn (2d8 fire).";
+                    break;
+                case "cleric_wrath_of_storm":
+                    _wrathOfStormPrimed = true;
+                    selfBuffMsg = "lightning crackles around you — the next attacker will be struck (2d8 lightning).";
+                    break;
+                case "cleric_spirit_shroud":
+                    StartSpellConcentration(spell, route);
+                    _spiritShroudActive = true;
+                    selfBuffMsg = "vengeful spirits swirl around you (+1d8 radiant melee, attackers take 1d6 radiant, concentration).";
+                    break;
+                case "cleric_death_ward":
+                case "paladin_death_ward":
+                    _deathWardActive = true;
+                    selfBuffMsg = "a golden ward shimmers — you will cheat death once.";
+                    break;
+                case "paladin_holy_rebuke":
+                    _holyRebukePrimed = true;
+                    selfBuffMsg = "divine wrath gathers — the next attacker will face judgment (2d6 radiant + heal 1d4).";
+                    break;
+                case "ranger_thorns":
+                    StartSpellConcentration(spell, route);
+                    _thornsActive = true;
+                    selfBuffMsg = "thorny vines wrap around you — attackers take 1d6 piercing (concentration).";
+                    break;
+                case "ranger_stoneskin":
+                case "mage_stoneskin":
+                    StartSpellConcentration(spell, route);
+                    _stoneskinActive = true;
+                    selfBuffMsg = "your skin hardens to stone — incoming damage reduced by 3 (concentration).";
+                    break;
+                case "bard_cutting_words":
+                    _cuttingWordsPrimed = true;
+                    selfBuffMsg = "a cutting remark ready on your lips — next enemy hit reduced by 1d8.";
+                    break;
+                case "bard_greater_invisibility":
+                    StartSpellConcentration(spell, route);
+                    _greaterInvisibilityActive = true;
+                    selfBuffMsg = "you vanish from sight — advantage on attacks, enemies have disadvantage (concentration).";
+                    break;
+                // Batch 4 — expanded arsenal
+                case "mage_counterspell":
+                    _counterspellPrimed = true;
+                    selfBuffMsg = "a magical ward coils around you — the next hit against you is halved.";
+                    break;
+                case "bard_invisibility":
+                    StartSpellConcentration(spell, route);
+                    _invisibilityActive = true;
+                    selfBuffMsg = "you slip from sight — enemies have -15% hit chance (concentration, breaks on attack).";
+                    break;
+                case "paladin_revivify":
+                    if (_revivifyUsed)
+                    {
+                        selfBuffMsg = "Revivify already used this combat — slot consumed.";
+                    }
+                    else
+                    {
+                        var hpThreshold = _player.MaxHp / 4;
+                        if (_player.CurrentHp <= hpThreshold)
+                        {
+                            _revivifyUsed = true;
+                            var chaMod = Math.Max(0, _player.Mod(StatName.Charisma));
+                            var reviveRoll = _rng.Next(1, 7) + _rng.Next(1, 7) + chaMod;
+                            var reviveHeal = Math.Max(1, reviveRoll);
+                            var reviveBefore = _player.CurrentHp;
+                            _player.CurrentHp = Math.Min(_player.MaxHp, _player.CurrentHp + reviveHeal);
+                            selfBuffMsg = $"divine energy surges — you recover {_player.CurrentHp - reviveBefore} HP!";
+                        }
+                        else
+                        {
+                            selfBuffMsg = "you're not wounded enough — Revivify fades unused. Slot consumed.";
+                        }
+                    }
+                    break;
+                // Batch 5 — signature powers
+                case "mage_blink":
+                    StartSpellConcentration(spell, route);
+                    _blinkActive = true;
+                    selfBuffMsg = "you phase in and out of the Ethereal Plane — 30% chance each hit misses (concentration).";
+                    break;
+                case "mage_protection_from_energy":
+                {
+                    StartSpellConcentration(spell, route);
+                    _protEnergyActive = true;
+                    _protEnergyElement = GetSelectedPendingSpellVariantId(spell);
+                    if (string.IsNullOrWhiteSpace(_protEnergyElement)) _protEnergyElement = "fire";
+                    selfBuffMsg = $"elemental wards reinforce you — half damage from {_protEnergyElement} (concentration).";
+                    break;
+                }
+                case "cleric_beacon_of_hope":
+                    StartSpellConcentration(spell, route);
+                    _beaconOfHopeActive = true;
+                    selfBuffMsg = "a beacon of divine light surrounds you — your next heal is doubled (concentration).";
+                    break;
+                case "bard_major_image":
+                    StartSpellConcentration(spell, route);
+                    _majorImageActive = true;
+                    selfBuffMsg = "a vivid illusion appears beside you — 25% chance attacks target the decoy (concentration).";
+                    break;
+                case "paladin_aura_of_courage":
+                    StartSpellConcentration(spell, route);
+                    _auraOfCourageActive = true;
+                    selfBuffMsg = "divine courage fills you — all incoming conditions last 1 fewer turn (concentration).";
+                    break;
+                default:
+                    StartSpellConcentration(spell, route);
+                    selfBuffMsg = "you feel empowered.";
+                    break;
+            }
+
+            PushCombatLog($"{spell.Name} ({tierLabel}): {selfBuffMsg}");
+            if (spell.RequiresSlot && !milestoneSlotWaive)
+                PushCombatLog($"L{spell.SpellLevel} slots {_player.GetSpellSlots(spell.SpellLevel)}/{_player.GetSpellSlotsMax(spell.SpellLevel)}.");
+            if (!spell.SuppressCounterAttack) DoEnemyAttack();
+            return;
+        }
+
+        // Summon spells: persistent summoned entity that auto-attacks each turn.
+        if (route.RouteKind == SpellEffectRouteKind.Summon)
+        {
+            if (!SpellData.SummonTypes.TryGetValue(spell.Id, out var summonType))
+            {
+                PushCombatLog($"{spell.Name}: summon definition not found.");
+                if (!spell.SuppressCounterAttack) DoEnemyAttack();
+                return;
+            }
+
+            // Replace existing summon if active
+            if (_activeSummon != null)
+            {
+                if (_activeSummon.Type.Behavior == SummonBehaviorKind.BuffMount)
+                {
+                    _runDefenseBonus = Math.Max(0, _runDefenseBonus - 2);
+                    _runFleeBonus = Math.Max(0, _runFleeBonus - 15);
+                }
+                PushCombatLog($"{_activeSummon.Type.Name} fades as you summon a new companion.");
+                _activeSummon = null;
+            }
+
+            _activeSummon = new SummonInstance
+            {
+                Type = summonType,
+                CurrentHp = summonType.MaxHp
+            };
+
+            // Apply BuffMount stat bonuses
+            if (summonType.Behavior == SummonBehaviorKind.BuffMount)
+            {
+                _runDefenseBonus += 2;
+                _runFleeBonus += 15;
+            }
+
+            StartSpellConcentration(spell, route);
+            PushCombatLog($"{spell.Name} ({tierLabel}): {summonType.Description}");
+            if (spell.RequiresSlot && !milestoneSlotWaive)
+                PushCombatLog($"L{spell.SpellLevel} slots {_player.GetSpellSlots(spell.SpellLevel)}/{_player.GetSpellSlotsMax(spell.SpellLevel)}.");
+            if (!spell.SuppressCounterAttack) DoEnemyAttack();
+            return;
+        }
+
+        // Transformation spells: polymorph/shapeshift into a form.
+        if (route.RouteKind == SpellEffectRouteKind.Transformation)
+        {
+            if (!SpellData.TransformationForms.TryGetValue(spell.Id, out var formIds) || formIds.Length == 0)
+            {
+                PushCombatLog($"{spell.Name}: no forms defined.");
+                if (!spell.SuppressCounterAttack) DoEnemyAttack();
+                return;
+            }
+
+            if (formIds.Length == 1)
+            {
+                ActivateTransformation(spell, route, formIds[0], milestoneSlotWaive);
+                return;
+            }
+
+            // Multi-form spell — open form selection UI
+            _pendingFormSpellId = spell.Id;
+            _pendingFormOptions = formIds;
+            _formSelectionIndex = 0;
+            _gameState = GameState.CombatFormSelection;
+            return;
+        }
+
+        // Cleanse spells: remove one active player condition.
+        if (route.RouteKind == SpellEffectRouteKind.Cleanse)
+        {
+            if (_playerConditions.Count == 0)
+            {
+                PushCombatLog($"{spell.Name}: no active conditions to remove. Slot wasted.");
+            }
+            else
+            {
+                var worst = _playerConditions.OrderByDescending(c => c.Potency).First();
+                _playerConditions.Remove(worst);
+                PushCombatLog($"{spell.Name} ({tierLabel}): {worst.Kind} removed.");
+            }
+            if (spell.RequiresSlot && !milestoneSlotWaive)
+                PushCombatLog($"L{spell.SpellLevel} slots {_player.GetSpellSlots(spell.SpellLevel)}/{_player.GetSpellSlotsMax(spell.SpellLevel)}.");
+            if (!spell.SuppressCounterAttack) DoEnemyAttack();
+            return;
+        }
+
+        if (IsEmpoweredMeleeSpell(spell))
+        {
+            if (!ResolveEmpoweredMeleeSpellStrike(spell, route, tierLabel))
+            {
+                return;
+            }
+
+            if (spell.RequiresSlot && !milestoneSlotWaive)
+            {
+                PushCombatLog($"L{spell.SpellLevel} slots {_player.GetSpellSlots(spell.SpellLevel)}/{_player.GetSpellSlotsMax(spell.SpellLevel)}.");
+            }
+
+            if (CheckEnemyDeath())
+            {
+                return;
+            }
+
+            DoEnemyAttack();
+            return;
+        }
+
+        StartSpellConcentration(spell, route);
+
         var shouldCounterAttack = !spell.SuppressCounterAttack;
-        var (damage, rawDamage, armorMitigation, statPower) = CalcSpellDamage(
-            spell.ScalingStat,
-            spell.BaseDamage + _player.SpellDamageBonus + GetClassSpellDamageBonus(_player) + _runSpellBonus + GetConditionSpellModifier(),
-            spell.Variance,
-            spell.ArmorBypass + _player.SpellArmorBypassBonus);
         var relicBurst = ConsumeRelicSpellBurstDamage();
         var milestoneArcBonus = milestoneSlotWaive ? GetArcDoctrineWaiveBonusDamage() : 0;
+        var suppressedCombatantId = _currentEnemy != null
+            ? BuildEncounterEnemyCombatantId(_currentEnemy)
+            : null;
+        var affectedEnemies = ResolveSpellAffectedEnemies(spell);
+        var anchorEnemy = _currentEnemy;
+        var damageTag = ResolveSpellDamageTagForCast(spell, route);
+        var vampiricTouchAnchorHpBefore = anchorEnemy?.CurrentHp ?? 0;
 
-        var totalDamage = damage + relicBurst + milestoneArcBonus;
-        _currentEnemy.CurrentHp = Math.Max(0, _currentEnemy.CurrentHp - totalDamage);
-        var tierLabel = spell.IsCantrip ? "Cantrip" : $"L{spell.SpellLevel}";
-        PushCombatLog($"{spell.Name} ({tierLabel}) hits for {totalDamage} {spell.DamageTag}.");
-        PushCombatLog($"Raw {rawDamage} (stat +{statPower}) - armor {armorMitigation}.");
+        if (affectedEnemies.Count == 0 && route.HazardSpec == null)
+        {
+            PushCombatLog($"{spell.Name} ({tierLabel}) finds no enemy in its area.");
+        }
+
+        foreach (var enemy in affectedEnemies)
+        {
+            var appliedAnyDamage = false;
+            var skipStatusesFromRouteSave = false;
+            var damageNumerator = 1;
+            var damageDenominator = 1;
+            if (TryResolveSpellDamageSaveOutcome(spell, route, enemy, out var routeSaveMessage, out damageNumerator, out damageDenominator, out skipStatusesFromRouteSave) &&
+                !string.IsNullOrWhiteSpace(routeSaveMessage))
+            {
+                PushCombatLog(routeSaveMessage);
+            }
+
+            if (route.DealsDirectDamage)
+            {
+                var (baseDamage, variance, armorBypass) = ResolveSpellDamageProfile(spell, enemy);
+                var hitCount = ResolveSpellHitCount(spell);
+                var channelDivinityBonus = GetAndConsumeChannelDivinityBonus();
+                var directEmpowerReroll = ConsumeEmpowerSpellPrime();
+                var spellBaseCalc = baseDamage + _player.SpellDamageBonus + GetClassSpellDamageBonus(_player) + _runSpellBonus + GetConditionSpellModifier() + channelDivinityBonus;
+                for (var hitIndex = 0; hitIndex < hitCount; hitIndex++)
+                {
+                    var (damage, rawDamage, armorMitigation, statPower) = CalcSpellDamageAgainstEnemy(
+                        enemy, spell.ScalingStat, spellBaseCalc, variance, armorBypass, spell.SpellLevel);
+                    if (directEmpowerReroll && hitIndex == 0)
+                    {
+                        var (damage2, rawDamage2, armorMitigation2, statPower2) = CalcSpellDamageAgainstEnemy(
+                            enemy, spell.ScalingStat, spellBaseCalc, variance, armorBypass, spell.SpellLevel);
+                        if (damage2 > damage)
+                        {
+                            (damage, rawDamage, armorMitigation, statPower) = (damage2, rawDamage2, armorMitigation2, statPower2);
+                            PushCombatLog("Empowered Spell — kept the better roll!");
+                        }
+                    }
+                    var markedBonus = GetEnemyIncomingDamageBonus(enemy);
+                    var anchorBonus = ReferenceEquals(enemy, anchorEnemy) && hitIndex == 0 ? relicBurst + milestoneArcBonus : 0;
+                    var totalDamage = damage + anchorBonus + markedBonus;
+                    if (damageNumerator == 0)
+                    {
+                        totalDamage = 0;
+                    }
+                    else if (damageDenominator > 1)
+                    {
+                        totalDamage = totalDamage * damageNumerator / damageDenominator;
+                    }
+
+                    enemy.CurrentHp = Math.Max(0, enemy.CurrentHp - totalDamage);
+                    appliedAnyDamage |= totalDamage > 0;
+                    if (totalDamage > 0)
+                    {
+                        TryBreakDamageSensitiveStatuses(enemy, spell.Name);
+                    }
+
+                    var hitLabel = hitCount > 1 ? $" hit {hitIndex + 1}" : string.Empty;
+                    PushCombatLog($"{spell.Name} ({tierLabel}){hitLabel} hits {enemy.Type.Name} for {totalDamage} {damageTag}.");
+                    PushCombatLog($"Raw {rawDamage} (stat +{statPower}) - armor {armorMitigation}.");
+                    if (markedBonus > 0)
+                    {
+                        PushCombatLog($"{enemy.Type.Name} suffers +{markedBonus} marked damage.");
+                    }
+                }
+
+                if (!skipStatusesFromRouteSave &&
+                    enemy.IsAlive &&
+                    string.Equals(spell.Id, "bard_thunderwave", StringComparison.Ordinal) &&
+                    TryPushEnemyAwayFromPoint(enemy, _player.X, _player.Y, 2, out var pushedTiles))
+                {
+                    PushCombatLog($"{enemy.Type.Name} is hurled back {pushedTiles} tile(s).");
+                }
+            }
+            else
+            {
+                PushCombatLog($"{spell.Name} ({tierLabel}) targets {enemy.Type.Name}.");
+            }
+
+            foreach (var statusMessage in skipStatusesFromRouteSave
+                ? Array.Empty<string>()
+                : ApplySpellOnHitStatuses(spell, route, enemy))
+            {
+                PushCombatLog(statusMessage);
+            }
+
+            if (appliedAnyDamage)
+            {
+                PushCombatLog($"{enemy.Type.Name} HP {enemy.CurrentHp}/{enemy.Type.MaxHp}.");
+            }
+        }
+
         if (relicBurst > 0)
         {
             PushCombatLog($"Astral Conduit amplifies the cast (+{relicBurst}).");
@@ -5829,36 +8502,132 @@ public sealed class Game : IDisposable
         {
             PushCombatLog($"Arc Doctrine preserves this slot (+{milestoneArcBonus} damage). Charges left: {_milestoneArcChargesThisCombat}.");
         }
-        PushCombatLog($"{_currentEnemy.Type.Name} HP {_currentEnemy.CurrentHp}/{_currentEnemy.Type.MaxHp}.");
         if (spell.RequiresSlot && !milestoneSlotWaive)
         {
             PushCombatLog($"L{spell.SpellLevel} slots {_player.GetSpellSlots(spell.SpellLevel)}/{_player.GetSpellSlotsMax(spell.SpellLevel)}.");
         }
 
-        if (spell.SuppressCounterAttack)
+        // Vampiric Touch: heal player for 50% of damage dealt (tracked via anchor enemy HP delta)
+        if (string.Equals(spell.Id, "mage_vampiric_touch", StringComparison.Ordinal) && _player != null && anchorEnemy != null)
         {
-            PushCombatLog($"{_currentEnemy.Type.Name} is disrupted and cannot counter this turn.");
+            var vtDamageDealt = Math.Max(0, vampiricTouchAnchorHpBefore - anchorEnemy.CurrentHp);
+            if (vtDamageDealt > 0)
+            {
+                var vtHeal = Math.Max(1, vtDamageDealt / 2);
+                var vtBefore = _player.CurrentHp;
+                _player.CurrentHp = Math.Min(_player.MaxHp, _player.CurrentHp + vtHeal);
+                if (_player.CurrentHp > vtBefore)
+                    PushCombatLog($"Vampiric Touch drains life — you recover {_player.CurrentHp - vtBefore} HP.");
+            }
         }
 
-        if (CheckEnemyDeath()) return;
+        if (route.HazardSpec != null)
+        {
+            PlaceCombatHazard(spell, route);
+        }
+
+        if (spell.SuppressCounterAttack)
+        {
+            PushCombatLog($"{anchorEnemy?.Type.Name ?? "The target"} is disrupted and cannot counter this turn.");
+        }
+
+        var requiresImmediateDeathResolution = route.TargetShape != SpellTargetShape.SingleEnemy || route.HazardSpec != null;
+        if (requiresImmediateDeathResolution)
+        {
+            if (ResolveEncounterEnemyDeathsImmediate()) return;
+        }
+        else if (CheckEnemyDeath())
+        {
+            return;
+        }
+
+        // Spiritual Weapon: once per combat — bonus melee attack for 1d8 + WIS mod after spell
+        if (_spiritualWeaponPrimed && _player != null && _currentEnemy != null && _currentEnemy.IsAlive)
+        {
+            _spiritualWeaponPrimed = false;
+            var wisMod = _player.Mod(StatName.Wisdom);
+            var swAtkBonus = wisMod + GetProficiencyBonus();
+            var swAtkBonusStr = swAtkBonus >= 0 ? $"+{swAtkBonus}" : $"{swAtkBonus}";
+            var (swHitResult, swD20, swTotal) = CombatMath.RollAttack(swAtkBonus, _currentEnemy.Type.ArmorClass, _rng);
+            if (swHitResult != AttackRollResult.Miss)
+            {
+                var swDice = _rng.Next(1, 9);
+                var swDmg = Math.Max(1, swDice + Math.Max(0, wisMod));
+                _currentEnemy.CurrentHp = Math.Max(0, _currentEnemy.CurrentHp - swDmg);
+                PushCombatLog($"Spiritual Weapon! d20{swAtkBonusStr}={swTotal} hits for {swDmg} ({swDice}+{wisMod} WIS).");
+                PushCombatLog($"{_currentEnemy.Type.Name} HP {_currentEnemy.CurrentHp}/{_currentEnemy.Type.MaxHp}.");
+                if (CheckEnemyDeath()) return;
+            }
+            else
+            {
+                PushCombatLog($"Spiritual Weapon misses! d20{swAtkBonusStr}={swTotal} vs AC {_currentEnemy.Type.ArmorClass}.");
+            }
+        }
+
         if (shouldCounterAttack)
         {
             DoEnemyAttack();
         }
         else
         {
-            DoEnemyAttack(skipFirstEnemyTurn: true);
+            DoEnemyAttack(suppressedEnemyCombatantId: suppressedCombatantId);
         }
     }
 
-    private (int damage, int rawDamage, int armorMitigation, int statPower) CalcSpellDamage(StatName scaleStat, int baseDamage, int variance, int armorBypass)
+    private (int damage, int rawDamage, int armorMitigation, int statPower) CalcSpellDamage(StatName scaleStat, int baseDamage, int variance, int armorBypass, int spellLevel = 1, int cantripDiceSides = 0)
     {
-        if (_player == null || _currentEnemy == null) return (0, 0, 0, 0);
-        var statPower = Math.Max(0, _player.Mod(scaleStat) * 2);
-        var varianceRoll = variance > 0 ? _rng.Next(variance + 1) : 0;
+        return CalcSpellDamageAgainstEnemy(_currentEnemy, scaleStat, baseDamage, variance, armorBypass, spellLevel, cantripDiceSides);
+    }
+
+    private (int damage, int rawDamage, int armorMitigation, int statPower) CalcSpellDamageAgainstEnemy(Enemy? target, StatName scaleStat, int baseDamage, int variance, int armorBypass, int spellLevel = 1, int cantripDiceSides = 0)
+    {
+        if (_player == null || target == null) return (0, 0, 0, 0);
+
+        // Cantrip level scaling (D&D 5e: 1 die at L1, 2 at L5, 3 at L11, 4 at L17)
+        if (spellLevel == 0 && cantripDiceSides > 0)
+        {
+            int diceCount = _player.Level switch { >= 17 => 4, >= 11 => 3, >= 5 => 2, _ => 1 };
+            int diceTotal = 0;
+            for (int i = 0; i < diceCount; i++)
+                diceTotal += _rng.Next(1, cantripDiceSides + 1);
+            // Add spell damage bonuses (feats, etc.) but NOT spellcasting stat (D&D cantrip rule)
+            var spellBonus = _player.SpellDamageBonus + GetClassSpellDamageBonus(_player);
+            var rawDamage_c = diceTotal + spellBonus;
+            // Cantrips still check save/AC for final damage
+            var effectiveArmor_c = Math.Max(0, target.Type.Defense - armorBypass);
+            var finalDmg_c = CombatMath.CalculateFinalDamage(rawDamage_c, target.Type.Defense, armorBypass);
+            return (finalDmg_c, rawDamage_c, effectiveArmor_c, 0);
+        }
+
+        var mod = _player.Mod(scaleStat);
+        var statPower = spellLevel switch
+        {
+            0 => 0,                             // cantrips: no stat scaling
+            1 => Math.Max(0, mod),              // L1: single mod
+            _ => Math.Max(0, mod * 2)           // L2+: doubled mod (unchanged)
+        };
+        // Overchannel: maximize all damage dice of this spell
+        int varianceRoll;
+        if (_overchannelPrimed && spellLevel > 0)
+        {
+            _overchannelPrimed = false;
+            varianceRoll = variance; // max roll
+            PushCombatLog("Overchannel — spell damage maximized!");
+            // Recoil: 1d6 damage to player
+            var recoil = _rng.Next(1, 7);
+            if (_player != null)
+            {
+                _player.CurrentHp = Math.Max(0, _player.CurrentHp - recoil);
+                PushCombatLog($"Overchannel recoil: {recoil} damage to you! HP {_player.CurrentHp}/{_player.MaxHp}.");
+            }
+        }
+        else
+        {
+            varianceRoll = variance > 0 ? _rng.Next(variance + 1) : 0;
+        }
         var raw = CombatMath.CalculateSpellRawDamage(baseDamage, statPower, varianceRoll);
-        var effectiveArmor = Math.Max(0, _currentEnemy.Type.Defense - armorBypass);
-        var finalDamage = CombatMath.CalculateFinalDamage(raw, _currentEnemy.Type.Defense, armorBypass);
+        var effectiveArmor = Math.Max(0, target.Type.Defense - armorBypass);
+        var finalDamage = CombatMath.CalculateFinalDamage(raw, target.Type.Defense, armorBypass);
         return (finalDamage, raw, effectiveArmor, statPower);
     }
 
@@ -5988,9 +8757,88 @@ public sealed class Game : IDisposable
         _skillMenuOffset = Math.Clamp(_skillMenuOffset, 0, maxOffset);
     }
 
+    private void EnsureCombatSkillSelectionVisible(int skillCount)
+    {
+        if (skillCount <= SkillVisibleCount)
+        {
+            _combatSkillMenuOffset = 0;
+            return;
+        }
+
+        if (_selectedCombatSkillIndex < _combatSkillMenuOffset)
+        {
+            _combatSkillMenuOffset = _selectedCombatSkillIndex;
+        }
+        else if (_selectedCombatSkillIndex >= _combatSkillMenuOffset + SkillVisibleCount)
+        {
+            _combatSkillMenuOffset = _selectedCombatSkillIndex - SkillVisibleCount + 1;
+        }
+
+        var maxOffset = Math.Max(0, skillCount - SkillVisibleCount);
+        _combatSkillMenuOffset = Math.Clamp(_combatSkillMenuOffset, 0, maxOffset);
+    }
+
+    private static int ClampMenuOffsetToVisibleCount(int selectedIndex, int totalCount, int currentOffset, int visibleCount)
+    {
+        if (visibleCount <= 0 || totalCount <= visibleCount)
+        {
+            return 0;
+        }
+
+        if (selectedIndex < currentOffset)
+        {
+            currentOffset = selectedIndex;
+        }
+        else if (selectedIndex >= currentOffset + visibleCount)
+        {
+            currentOffset = selectedIndex - visibleCount + 1;
+        }
+
+        return Math.Clamp(currentOffset, 0, Math.Max(0, totalCount - visibleCount));
+    }
+
     private bool HasAnyLearnableSpells()
     {
         return _player != null && _spellLearnChoices.Any(spell => _player.CanLearnSpell(spell, out _));
+    }
+
+    private static string GetFeatPrerequisiteLabel(FeatDefinition feat)
+    {
+        if (!string.IsNullOrWhiteSpace(feat.PrerequisiteText))
+        {
+            return feat.PrerequisiteText!;
+        }
+
+        var requirementParts = new List<string>();
+
+        if (feat.RequiredFeatIds.Count > 0)
+        {
+            var requiredNames = feat.RequiredFeatIds
+                .Select(id => FeatBook.ById.TryGetValue(id, out var requiredFeat) ? requiredFeat.Name : id);
+            requirementParts.Add(string.Join(", ", requiredNames));
+        }
+
+        if (feat.RequiresCasterClass)
+        {
+            requirementParts.Add("a spellcasting class");
+        }
+
+        if (requirementParts.Count == 0)
+        {
+            return "No prerequisite.";
+        }
+
+        return $"Requires {string.Join(" and ", requirementParts)}.";
+    }
+
+    private string GetFeatEffectLabel(FeatDefinition feat)
+    {
+        if (_player == null)
+        {
+            return feat.Effect;
+        }
+
+        return _player.GetFeatEffectText(feat);
     }
 
     private int GetClassMeleeDamageBonus(Player player)
@@ -6007,24 +8855,26 @@ public sealed class Game : IDisposable
 
     private int GetClassSpellDamageBonus(Player player)
     {
-        return player.CharacterClass.Name switch
+        var bonus = player.CharacterClass.Name switch
         {
-            "Mage" => 2,
+            "Mage" => 1,
             "Cleric" => 1,
             "Bard" => 1,
             "Paladin" => 1,
             "Ranger" => 1,
             _ => 0
         };
+        // Blessed Strikes: Cleric feat — Potent Spellcasting (WIS mod added to spell damage)
+        if (player.HasFeat("cleric_blessed_strikes_feat"))
+            bonus += Math.Max(0, player.Mod(StatName.Wisdom));
+        return bonus;
     }
 
-    private int GetClassCritBonus(Player player)
+    private int GetClassCritRangeBonus(Player player)
     {
         return player.CharacterClass.Name switch
         {
-            "Rogue" => 8,
-            "Ranger" => 4,
-            "Bard" => 3,
+            "Rogue" => 1,
             _ => 0
         };
     }
@@ -6037,17 +8887,6 @@ public sealed class Game : IDisposable
             "Paladin" => 1,
             "Barbarian" => 1,
             "Cleric" => 1,
-            _ => 0
-        };
-    }
-
-    private int GetClassEvasionChance(Player player)
-    {
-        return player.CharacterClass.Name switch
-        {
-            "Rogue" => 12,
-            "Ranger" => 6,
-            "Bard" => 4,
             _ => 0
         };
     }
@@ -6079,35 +8918,252 @@ public sealed class Game : IDisposable
         };
     }
 
-    private (int damage, bool crit, int rawDamage, int armorMitigation, int critChance) CalcPlayerDamage()
+    private WeaponDefinition GetEquippedWeaponDef()
+    {
+        return WeaponBook.ById.TryGetValue(_equippedWeaponId, out var weapon)
+            ? weapon
+            : WeaponBook.Unarmed;
+    }
+
+    private int GetPlayerArmorClass()
+    {
+        if (_player == null) return 10;
+        var armorCategory = GetCurrentArmorCategory();
+        return _player.GetArmorClass(armorCategory)
+            + GetClassDefenseBonus(_player)
+            + _runDefenseBonus
+            + GetConditionDefenseModifier();
+    }
+
+    private (int damage, bool crit, int rawDamage, int armorMitigation, int critChance) CalcPlayerDamage(bool forceCrit = false, bool bypassArmor = false)
     {
         if (_player == null || _currentEnemy == null) return (0, false, 0, 0, 0);
 
-        var strMod = _player.Mod(StatName.Strength);
-        var classMeleeBonus = GetClassMeleeDamageBonus(_player);
-        var baseDamage = CombatMath.CalculateMeleeBaseDamage(
-            strMod,
-            _player.MeleeDamageBonus,
-            classMeleeBonus,
-            _runMeleeBonus + GetConditionMeleeModifier());
-        var dexMod = _player.Mod(StatName.Dexterity);
-        var critChance = CombatMath.CalculateCritChancePercent(
-            dexMod,
-            _player.CritBonus,
-            GetClassCritBonus(_player),
-            _runCritBonus);
-        var crit = _rng.NextDouble() * 100 < critChance;
+        var weapon = GetEquippedWeaponDef();
 
-        var rawDamage = baseDamage + _rng.Next(baseDamage);
-        var armorMitigation = _currentEnemy.Type.Defense;
-        var afterDef = Math.Max(1, rawDamage - armorMitigation);
-        var finalDamage = crit ? afterDef * 2 : afterDef;
-        return (finalDamage, crit, rawDamage, armorMitigation, critChance);
+        // Resolve attack stat: finesse uses max(STR, DEX), ranged uses DEX, else weapon's stat
+        StatName atkStat;
+        if (weapon.IsFinesse)
+            atkStat = _player.Mod(StatName.Strength) >= _player.Mod(StatName.Dexterity)
+                ? StatName.Strength : StatName.Dexterity;
+        else if (weapon.IsRanged)
+            atkStat = StatName.Dexterity;
+        else
+            atkStat = weapon.AttackStat;
+
+        var atkMod = _player.Mod(atkStat);
+        var classMeleeBonus = GetClassMeleeDamageBonus(_player);
+
+        // Roll weapon dice — double on crit (D&D: double dice only, not flat bonuses)
+        // Brutal Critical: on crit, roll one additional weapon damage die
+        var brutalCritExtra = (forceCrit && _player.HasFeat("barbarian_brutal_critical_feat")) ? 1 : 0;
+        var diceCount = (forceCrit ? weapon.DiceCount * 2 : weapon.DiceCount) + brutalCritExtra;
+        var diceRolls = new int[diceCount];
+        for (int i = 0; i < diceCount; i++)
+            diceRolls[i] = _rng.Next(1, weapon.DamageDice + 1);
+
+        // Piercer: reroll one weapon damage die and keep the higher result (once per turn)
+        if (_player.HasFeat("piercer_feat") && diceRolls.Length > 0)
+        {
+            int lowestIdx = 0;
+            for (int i = 1; i < diceRolls.Length; i++)
+                if (diceRolls[i] < diceRolls[lowestIdx]) lowestIdx = i;
+            var reroll = _rng.Next(1, weapon.DamageDice + 1);
+            if (reroll > diceRolls[lowestIdx])
+                diceRolls[lowestIdx] = reroll;
+        }
+
+        var diceDamage = 0;
+        foreach (var r in diceRolls) diceDamage += r;
+
+        // Flat bonuses (NOT doubled on crit)
+        var flatBonus = atkMod + _player.MeleeDamageBonus + classMeleeBonus
+            + _runMeleeBonus + GetConditionMeleeModifier();
+
+        var rawDamage = diceDamage + Math.Max(0, flatBonus);
+        var finalDamage = Math.Max(1, rawDamage);
+        var markedBonus = GetEnemyIncomingDamageBonus(_currentEnemy);
+        finalDamage += markedBonus;
+
+        var displayThreshold = Math.Max(2, _player.CritThreshold - GetClassCritRangeBonus(_player) - _runCritBonus);
+        return (finalDamage, forceCrit, rawDamage, 0, displayThreshold);
+    }
+
+    private void DoTransformedPlayerAttack()
+    {
+        if (_player == null || _currentEnemy == null || _activeTransformation == null) return;
+        var form = _activeTransformation.Form;
+
+        if (!form.CanAttack)
+        {
+            PushCombatLog("You cannot attack in this form!");
+            return;
+        }
+
+        // Apply PackTactics: +2 if enemy already damaged
+        var atkBonus = form.AttackBonus;
+        if (form.Special == FormSpecialKind.PackTactics && _currentEnemy.CurrentHp < _currentEnemy.Type.MaxHp)
+            atkBonus += form.SpecialValue;
+
+        // Apply ArmorBypass: reduce effective AC
+        var effectiveAC = _currentEnemy.Type.ArmorClass;
+        if (form.Special == FormSpecialKind.ArmorBypass)
+            effectiveAC = Math.Max(0, effectiveAC - form.SpecialValue);
+
+        var (hitResult, d20, rollTotal) = CombatMath.RollAttack(atkBonus, effectiveAC, _rng);
+        var isCrit = hitResult == AttackRollResult.CriticalHit;
+        var atkBonusStr = atkBonus >= 0 ? $"+{atkBonus}" : $"{atkBonus}";
+
+        if (hitResult != AttackRollResult.Miss)
+        {
+            // Roll form damage
+            var dice = 0;
+            for (var i = 0; i < form.DamageCount; i++)
+                dice += _rng.Next(1, form.DamageDice + 1);
+            var dmgBonus = form.DamageBonus;
+
+            // UseCasterStatMod: add caster's spell stat mod
+            if (form.UseCasterStatMod)
+            {
+                var scaleStat = SpellData.ById.TryGetValue(_activeTransformation.SourceSpellId, out var spellDef)
+                    ? spellDef.ScalingStat : StatName.Wisdom;
+                dmgBonus += Math.Max(0, _player.Mod(scaleStat));
+            }
+
+            var dmg = Math.Max(1, dice + dmgBonus);
+
+            // Crit: double dice
+            if (isCrit) dmg += dice;
+
+            // BonusCritDamage special
+            if (isCrit && form.Special == FormSpecialKind.BonusCritDamage)
+                dmg += _rng.Next(1, form.SpecialValue + 1);
+
+            // FirstHitBonus special (consumed on first hit)
+            if (_activeTransformation.FirstHitPrimed && form.Special == FormSpecialKind.FirstHitBonus)
+            {
+                dmg += _rng.Next(1, form.SpecialValue + 1);
+                _activeTransformation.FirstHitPrimed = false;
+                PushCombatLog($"Ambush strike! Bonus 1d{form.SpecialValue} damage.");
+            }
+
+            _currentEnemy.CurrentHp = Math.Max(0, _currentEnemy.CurrentHp - dmg);
+            var critTag = isCrit ? " CRIT!" : "";
+            PushCombatLog($"{form.Name} attacks! d20{atkBonusStr}={rollTotal}{critTag} for {dmg} {form.DamageType}.");
+            PushCombatLog($"{_currentEnemy.Type.Name} HP {_currentEnemy.CurrentHp}/{_currentEnemy.Type.MaxHp}.");
+
+            // PoisonOnHit: apply Poison status to enemy
+            if (form.Special == FormSpecialKind.PoisonOnHit && _currentEnemy.IsAlive)
+            {
+                var existing = _currentEnemy.StatusEffects.FirstOrDefault(s => s.Kind == CombatStatusKind.Poison);
+                if (existing != null)
+                {
+                    existing.Potency = Math.Max(existing.Potency, form.SpecialValue);
+                    existing.RemainingTurns = Math.Max(existing.RemainingTurns, 2);
+                }
+                else
+                {
+                    _currentEnemy.StatusEffects.Add(new CombatStatusState
+                    {
+                        Kind = CombatStatusKind.Poison,
+                        Potency = form.SpecialValue,
+                        RemainingTurns = 2,
+                        SourceSpellId = _activeTransformation.SourceSpellId,
+                        SourceLabel = form.Name
+                    });
+                }
+                PushCombatLog($"Venom! {_currentEnemy.Type.Name} poisoned ({form.SpecialValue} dmg/turn, 2 turns).");
+            }
+
+            // BurnOnHit: apply Burning status to enemy
+            if (form.Special == FormSpecialKind.BurnOnHit && _currentEnemy.IsAlive)
+            {
+                var existing = _currentEnemy.StatusEffects.FirstOrDefault(s => s.Kind == CombatStatusKind.Burning);
+                if (existing != null)
+                {
+                    existing.Potency = Math.Max(existing.Potency, form.SpecialValue);
+                    existing.RemainingTurns = Math.Max(existing.RemainingTurns, 2);
+                }
+                else
+                {
+                    _currentEnemy.StatusEffects.Add(new CombatStatusState
+                    {
+                        Kind = CombatStatusKind.Burning,
+                        Potency = form.SpecialValue,
+                        RemainingTurns = 2,
+                        SourceSpellId = _activeTransformation.SourceSpellId,
+                        SourceLabel = form.Name
+                    });
+                }
+                PushCombatLog($"Ignites! {_currentEnemy.Type.Name} burning ({form.SpecialValue} fire/turn, 2 turns).");
+            }
+
+            // DebuffOnHit: apply Weakened status to enemy (persistent -2 attack for 2 turns)
+            if (form.Special == FormSpecialKind.DebuffOnHit && _currentEnemy.IsAlive)
+            {
+                var existing = _currentEnemy.StatusEffects.FirstOrDefault(s => s.Kind == CombatStatusKind.Weakened);
+                if (existing != null)
+                {
+                    existing.Potency = Math.Max(existing.Potency, form.SpecialValue);
+                    existing.RemainingTurns = Math.Max(existing.RemainingTurns, 2);
+                }
+                else
+                {
+                    _currentEnemy.StatusEffects.Add(new CombatStatusState
+                    {
+                        Kind = CombatStatusKind.Weakened,
+                        Potency = form.SpecialValue,
+                        RemainingTurns = 2,
+                        SourceSpellId = _activeTransformation.SourceSpellId,
+                        SourceLabel = form.Name
+                    });
+                }
+                PushCombatLog($"Debilitating blow! {_currentEnemy.Type.Name} weakened (-{form.SpecialValue} attack, 2 turns).");
+            }
+
+            // HealOnKill
+            if (_currentEnemy.CurrentHp <= 0 && form.Special == FormSpecialKind.HealOnKill)
+            {
+                var healAmt = _rng.Next(1, form.SpecialValue + 1);
+                var before = _player.CurrentHp;
+                _player.CurrentHp = Math.Min(_player.MaxHp, _player.CurrentHp + healAmt);
+                PushCombatLog($"Devour! Heal {_player.CurrentHp - before} HP.");
+            }
+
+            if (!_currentEnemy.IsAlive) { ResolveEncounterEnemyDeathsImmediate(); return; }
+        }
+        else
+        {
+            PushCombatLog($"{form.Name} misses! d20{atkBonusStr}={rollTotal} vs AC {effectiveAC}.");
+        }
+
+        // Counter-attack (unless NoCounterAttack special)
+        if (form.Special != FormSpecialKind.NoCounterAttack)
+            DoEnemyAttack();
     }
 
     private void DoPlayerAttack()
     {
+        if (_activeTransformation != null)
+        {
+            DoTransformedPlayerAttack();
+            return;
+        }
         if (_player == null || _currentEnemy == null) return;
+
+        // Sanctuary breaks when you attack
+        if (_sanctuaryActive)
+        {
+            _sanctuaryActive = false;
+            EndActiveConcentration("You broke Sanctuary by attacking.");
+        }
+
+        // Invisibility breaks when you attack
+        if (_invisibilityActive)
+        {
+            _invisibilityActive = false;
+            EndActiveConcentration("Invisibility breaks as you strike.");
+        }
         var validation = ValidateCurrentEnemyTargetForMelee();
         if (!validation.IsLegal)
         {
@@ -6123,41 +9179,279 @@ public sealed class Game : IDisposable
             PushCombatLog($"War Cry adds {warCryDamage} first-strike damage.");
         }
 
-        var (damage, crit, rawDamage, armorMitigation, critChance) = CalcPlayerDamage();
-        var total = damage + warCryDamage;
+        // Vanish: advantage on this attack
+        if (_vanishPrimed)
+        {
+            _vanishPrimed = false;
+            _playerAttackAdvantage = true;
+            PushCombatLog("Vanish! You slip into shadow — advantage on this attack.");
+        }
+
+        // Assassin: advantage + auto-crit on hit if enemy hasn't taken their first turn yet
+        var assassinForceCrit = _player.HasFeat("rogue_assassin_feat") && !_enemyHasActedThisCombat;
+        if (assassinForceCrit)
+        {
+            _playerAttackAdvantage = true;
+            PushCombatLog("Assassin — striking before the enemy reacts! Advantage + auto-crit on hit.");
+        }
+
+        // Lucky: advantage on this attack
+        if (_luckyPrimed)
+        {
+            _luckyPrimed = false;
+            _playerAttackAdvantage = true;
+            PushCombatLog("Lucky — fortune favors the bold! Advantage on this attack.");
+        }
+
+        var markBonus = GetEnemyIncomingDamageBonus(_currentEnemy);
+        // Sharpshooter: capture prime state before consuming (so both CalcPlayerDamage calls use it)
+        var sharpshooterActive = _sharpshooterPrimed;
+
+        // --- D&D Attack Roll ---
+        bool attackHit = false;
+        bool attackIsCrit = false;
+        var weapon = GetEquippedWeaponDef();
+        StatName atkStat;
+        if (weapon.IsFinesse)
+            atkStat = _player.Mod(StatName.Strength) >= _player.Mod(StatName.Dexterity)
+                ? StatName.Strength : StatName.Dexterity;
+        else if (weapon.IsRanged)
+            atkStat = StatName.Dexterity;
+        else
+            atkStat = weapon.AttackStat;
+
+        var totalAttackBonus = _player.Mod(atkStat) + GetProficiencyBonus() + GetPlayerConditionAttackPenalty();
+        // Bardic Inspiration: add 1d6 to attack roll
+        if (_bardicInspirationPrimed && _bardicInspirationForAttack)
+        {
+            _bardicInspirationPrimed = false;
+            var inspRoll = _rng.Next(1, 7);
+            totalAttackBonus += inspRoll;
+            PushCombatLog($"Bardic Inspiration — +{inspRoll} to your attack roll!");
+        }
+        // Greater Invisibility: advantage on player attacks
+        if (_greaterInvisibilityActive)
+            _playerAttackAdvantage = true;
+        var critThreshold = Math.Max(2, _player.CritThreshold - GetClassCritRangeBonus(_player) - _runCritBonus);
+        var (hitResult, d20Raw, attackTotal) = CombatMath.RollAttack(
+            totalAttackBonus, _currentEnemy.Type.ArmorClass, _rng,
+            advantage: _playerAttackAdvantage, disadvantage: _playerAttackDisadvantage,
+            critThreshold: critThreshold);
+        _playerAttackAdvantage = false;
+        _playerAttackDisadvantage = false;
+
+        attackHit = hitResult != AttackRollResult.Miss;
+        attackIsCrit = hitResult == AttackRollResult.CriticalHit;
+
+        var acTarget = _currentEnemy.Type.ArmorClass;
+        if (!attackHit)
+        {
+            PushCombatLog($"You miss! d20:{d20Raw}+{totalAttackBonus}={attackTotal} vs AC {acTarget}.");
+            DoEnemyAttack();
+            return;
+        }
+        var critLabel = attackIsCrit ? " CRITICAL HIT!" : string.Empty;
+        PushCombatLog($"You hit! d20:{d20Raw}+{totalAttackBonus}={attackTotal} vs AC {acTarget}.{critLabel}");
+
+        // Override forceCrit with actual crit determination (Assassin: auto-crit on any hit before enemy acts)
+        var resolvedCrit = attackIsCrit || (assassinForceCrit && attackHit);
+        if (assassinForceCrit && attackHit && !attackIsCrit)
+            PushCombatLog("Assassin — auto-critical!");
+
+        // Crusher: on a critical hit, impose Disadvantage on the enemy's next attack
+        if (resolvedCrit && _player.HasFeat("crusher_feat") && _currentEnemy.IsAlive)
+        {
+            _enemyNextAttackDisadvantage = true;
+            PushCombatLog("Crusher — the impact staggers the enemy! Disadvantage on their next attack.");
+        }
+
+        var (damage, crit, rawDamage, armorMitigation, critThresholdDisplay) = CalcPlayerDamage(forceCrit: resolvedCrit, bypassArmor: sharpshooterActive);
+
+        // Savage Attacker: roll twice, keep higher result (D&D 2024: once per turn)
+        if (_player.HasFeat("savage_attacker_feat"))
+        {
+            var (damage2, crit2, rawDamage2, armorMitigation2, _) = CalcPlayerDamage(forceCrit: resolvedCrit, bypassArmor: sharpshooterActive);
+            if (damage2 > damage)
+            {
+                (damage, crit, rawDamage, armorMitigation) = (damage2, crit2, rawDamage2, armorMitigation2);
+                PushCombatLog("Savage Attacker — kept the better roll!");
+            }
+        }
+
+        // Battle Cry: flat armor-bypassing bonus damage
+        var battleCryBonus = 0;
+        if (_battleCryPrimed)
+        {
+            battleCryBonus = Math.Max(2, 3 + _player.Mod(StatName.Strength));
+            _battleCryPrimed = false;
+            PushCombatLog($"Battle Cry unleashed: +{battleCryBonus} bonus damage.");
+        }
+
+        // Divine Smite: consume L1 slot for +5 radiant bonus
+        var divineSmiteBonus = 0;
+        if (_divineSmitePrimed)
+        {
+            _divineSmitePrimed = false;
+            if (_player.TryConsumeSpellSlot(1))
+            {
+                divineSmiteBonus = 5;
+                PushCombatLog($"Divine Smite! Holy power surges for +{divineSmiteBonus} radiant damage.");
+            }
+            else
+            {
+                PushCombatLog("Divine Smite fizzled — no L1 spell slot available.");
+            }
+        }
+
+        // Great Weapon Master: passive — add proficiency bonus to every melee hit (D&D 2024)
+        var gwmPassive = _player.HasFeat("great_weapon_master_feat") ? GetProficiencyBonus() : 0;
+
+        // Sharpshooter: once/combat — precision physical attack ignores all armor, +5 damage
+        var sharpshooterFlatBonus = 0;
+        if (_sharpshooterPrimed)
+        {
+            _sharpshooterPrimed = false;
+            sharpshooterFlatBonus = 5;
+            PushCombatLog("Sharpshooter — precision shot ignores armor!");
+        }
+
+        var divineFavorBonus = _divineFavorActive ? _rng.Next(1, 5) : 0;
+        if (_divineFavorActive && divineFavorBonus > 0)
+            PushCombatLog($"Divine Favor — +{divineFavorBonus} radiant!");
+
+        // Bless: +1d4 bonus damage per hit
+        var blessBonus = 0;
+        if (_blessActive)
+        {
+            blessBonus = _rng.Next(1, 5);
+            PushCombatLog($"Bless — +{blessBonus} divine guidance!");
+        }
+
+        // Magic Weapon: +1d6 force per hit
+        var magicWeaponBonus = 0;
+        if (_magicWeaponActive)
+        {
+            magicWeaponBonus = _rng.Next(1, 7);
+            PushCombatLog($"Magic Weapon — +{magicWeaponBonus} force!");
+        }
+
+        // Flame Arrows: +1d8 fire per hit
+        var flameArrowsBonus = 0;
+        if (_flameArrowsActive)
+        {
+            flameArrowsBonus = _rng.Next(1, 9);
+            PushCombatLog($"Flame Arrows — +{flameArrowsBonus} fire!");
+        }
+
+        // Elemental Weapon: +2d4 of chosen element per hit
+        var elementalWeaponBonus = 0;
+        if (_elementalWeaponActive)
+        {
+            elementalWeaponBonus = _rng.Next(1, 5) + _rng.Next(1, 5);
+            PushCombatLog($"Elemental Weapon — +{elementalWeaponBonus} {_elementalWeaponElement}!");
+        }
+
+        // Crusader's Mantle: +1d6 radiant per hit
+        var crusadersMantleBonus = 0;
+        if (_crusadersMantleActive)
+        {
+            crusadersMantleBonus = _rng.Next(1, 7);
+            PushCombatLog($"Crusader's Mantle — +{crusadersMantleBonus} radiant!");
+        }
+
+        // Zephyr Strike: +1d8 force NEXT HIT ONLY (consumed)
+        var zephyrStrikeBonus = 0;
+        if (_zephyrStrikeActive && _zephyrStrikeHitPrimed)
+        {
+            _zephyrStrikeHitPrimed = false;
+            zephyrStrikeBonus = _rng.Next(1, 9);
+            PushCombatLog($"Zephyr Strike — +{zephyrStrikeBonus} force surge!");
+        }
+
+        // Colossus Slayer: +1d8 bonus damage when enemy is below max HP
+        var colossusSlayerBonus = 0;
+        if (_player.HasFeat("ranger_colossus_slayer_feat") && _currentEnemy.CurrentHp < _currentEnemy.Type.MaxHp)
+        {
+            colossusSlayerBonus = _rng.Next(1, 9);
+            PushCombatLog($"Colossus Slayer — +{colossusSlayerBonus} bonus damage to wounded prey!");
+        }
+
+        // Absorb Elements: +1d6 on next melee hit (consumed)
+        var absorbElementsBonus = 0;
+        if (_absorbElementsCharged)
+        {
+            _absorbElementsCharged = false;
+            absorbElementsBonus = _rng.Next(1, 7);
+            PushCombatLog($"Absorb Elements — +{absorbElementsBonus} elemental surge!");
+        }
+
+        // Hex: +1d4 necrotic per hit
+        var hexBonus = 0;
+        if (_hexActive)
+        {
+            hexBonus = _rng.Next(1, 5);
+            PushCombatLog($"Hex — +{hexBonus} necrotic!");
+        }
+
+        // Spirit Shroud: +1d8 radiant per melee hit
+        var spiritShroudBonus = 0;
+        if (_spiritShroudActive)
+        {
+            spiritShroudBonus = _rng.Next(1, 9);
+            PushCombatLog($"Spirit Shroud — +{spiritShroudBonus} radiant!");
+        }
+
+        var total = damage + warCryDamage + battleCryBonus + divineSmiteBonus + gwmPassive + sharpshooterFlatBonus + divineFavorBonus + magicWeaponBonus + flameArrowsBonus + crusadersMantleBonus + zephyrStrikeBonus + colossusSlayerBonus + blessBonus + absorbElementsBonus + hexBonus + spiritShroudBonus + elementalWeaponBonus;
         _currentEnemy.CurrentHp = Math.Max(0, _currentEnemy.CurrentHp - total);
+        if (total > 0)
+        {
+            TryBreakDamageSensitiveStatuses(_currentEnemy, "your attack");
+        }
         var critTag = crit ? " CRIT x2!" : string.Empty;
         PushCombatLog($"You hit for {total}.{critTag}");
-        PushCombatLog($"Raw {rawDamage} - armor {armorMitigation} | Crit chance {critChance}%.");
+        PushCombatLog($"Raw {rawDamage} - armor {armorMitigation} | Crit on {critThresholdDisplay}+.");
+        if (markBonus > 0)
+        {
+            PushCombatLog($"Marked target suffers +{markBonus} bonus damage.");
+        }
         PushCombatLog($"{_currentEnemy.Type.Name} HP {_currentEnemy.CurrentHp}/{_currentEnemy.Type.MaxHp}.");
         ApplyRelicMeleeTrigger();
 
         if (_player.HasBonusAttack && _currentEnemy.IsAlive)
         {
-            var (bonus, bonusCrit, bonusRaw, bonusArmor, bonusCritChance) = CalcPlayerDamage();
+            var (bonus, bonusCrit, bonusRaw, bonusArmor, _) = CalcPlayerDamage();
             _currentEnemy.CurrentHp = Math.Max(0, _currentEnemy.CurrentHp - bonus);
+            if (bonus > 0)
+            {
+                TryBreakDamageSensitiveStatuses(_currentEnemy, "Swift Strikes");
+            }
             var bonusCritTag = bonusCrit ? " CRIT x2!" : string.Empty;
             PushCombatLog($"Swift Strikes: +{bonus}.{bonusCritTag}");
-            PushCombatLog($"Raw {bonusRaw} - armor {bonusArmor} | Crit {bonusCritChance}%.");
             PushCombatLog($"{_currentEnemy.Type.Name} HP {_currentEnemy.CurrentHp}/{_currentEnemy.Type.MaxHp}.");
             ApplyRelicMeleeTrigger();
         }
 
         if (_player.PoisonDamage > 0 && _currentEnemy.IsAlive)
         {
-            _enemyPoisoned = _player.PoisonDamage;
-            PushCombatLog($"Poison Blade primed ({_enemyPoisoned}/turn).");
+            var poisonApplied = TryApplyOrRefreshEnemyStatus(
+                _currentEnemy,
+                new CombatStatusApplySpec
+                {
+                    Kind = CombatStatusKind.Poison,
+                    Potency = _player.PoisonDamage,
+                    DurationTurns = 2
+                },
+                "poison_blade",
+                "Poison Blade",
+                null,
+                out var poisonMessage);
+            if (poisonApplied && !string.IsNullOrWhiteSpace(poisonMessage))
+            {
+                PushCombatLog(poisonMessage);
+            }
         }
 
         if (CheckEnemyDeath()) return;
-
-        if (_enemyPoisoned > 0 && _currentEnemy != null)
-        {
-            _currentEnemy.CurrentHp = Math.Max(0, _currentEnemy.CurrentHp - _enemyPoisoned);
-            PushCombatLog($"Poison deals {_enemyPoisoned} damage.");
-            PushCombatLog($"{_currentEnemy.Type.Name} HP {_currentEnemy.CurrentHp}/{_currentEnemy.Type.MaxHp}.");
-            if (CheckEnemyDeath()) return;
-        }
 
         DoEnemyAttack();
     }
@@ -6176,16 +9470,204 @@ public sealed class Game : IDisposable
         DoEnemyAttack();
     }
 
-    private void DoManaShield()
+    private void DoArcaneWard()
     {
         if (_player == null || _currentEnemy == null) return;
         if (_gameState == GameState.DeathScreen || !_player.IsAlive) return;
 
-        _player.CurrentMana -= 3;
-        var absorb = _player.ManaShieldAbsorb;
-        PushCombatLog($"Mana Shield primed ({absorb} absorb).");
-        PushCombatLog($"MP {_player.CurrentMana}/{_player.MaxMana}.");
+        _arcaneWardUsedThisCombat = true;
+        var absorb = _player.ArcaneWardAbsorb;
+        PushCombatLog($"Arcane Ward primed ({absorb} absorb).");
         DoEnemyAttack(firstEnemyDamageAbsorb: absorb);
+    }
+
+    private void DoChannelDivinity()
+    {
+        if (_player == null || _currentEnemy == null) return;
+        _channelDivinityUsedThisCombat = true;
+        _channelDivinityPrimed = true;
+        var bonus = _player.ChannelDivinityBonus;
+        PushCombatLog($"Channel Divinity primed — next divine spell deals +{bonus} damage.");
+        _gameState = GameState.Combat;
+    }
+
+    private void DoCuttingWords()
+    {
+        if (_player == null || _currentEnemy == null) return;
+        _cuttingWordsUsedThisCombat = true;
+        var reduction = _rng.Next(1, 5); // 1d4
+        PushCombatLog($"Cutting Words — enemy's next attack roll reduced by {reduction}.");
+        DoEnemyAttack(attackRollPenalty: reduction);
+    }
+
+    private void DoLayOnHands()
+    {
+        if (_player == null) return;
+        _layOnHandsUsedThisCombat = true;
+        var heal = _player.LayOnHandsHeal;
+        var before = _player.CurrentHp;
+        _player.CurrentHp = Math.Min(_player.CurrentHp + heal, _player.MaxHp);
+        var recovered = _player.CurrentHp - before;
+        PushCombatLog($"Lay on Hands restores {recovered} HP.");
+        PushCombatLog($"HP {before} -> {_player.CurrentHp}/{_player.MaxHp}.");
+        DoEnemyAttack();
+    }
+
+    private void DoBattleCry()
+    {
+        if (_player == null) return;
+        _battleCryUsedThisCombat = true;
+        _battleCryPrimed = true;
+        var bonus = Math.Max(2, 3 + _player.Mod(StatName.Strength));
+        PushCombatLog($"Battle Cry! Next attack deals +{bonus} bonus damage.");
+        _gameState = GameState.Combat;
+    }
+
+    private void DoVanish()
+    {
+        if (_player == null) return;
+        _vanishUsedThisCombat = true;
+        _vanishPrimed = true;
+        PushCombatLog("Vanish! You slip into shadow — next attack is a guaranteed critical hit.");
+        _gameState = GameState.Combat;
+    }
+
+    private void DoDivineSmite()
+    {
+        if (_player == null) return;
+        _divineSmiteUsedThisCombat = true;
+        _divineSmitePrimed = true;
+        PushCombatLog("Divine Smite primed — next melee hit channels +5 radiant damage.");
+        _gameState = GameState.Combat;
+    }
+
+    private void DoDivineFavor()
+    {
+        if (_player == null) return;
+        _divineFavorUsedThisCombat = true;
+        _divineFavorActive = true;
+        PushCombatLog("Divine Favor — sacred radiance infuses your weapon. Each hit deals +1d4 radiant damage.");
+        _gameState = GameState.Combat;
+    }
+
+    private void DoEmpowerSpell()
+    {
+        if (_player == null) return;
+        _empowerSpellUsedThisCombat = true;
+        _empowerSpellPrimed = true;
+        PushCombatLog("Empowered Spell primed — next spell rolls damage twice, keeps the higher result.");
+        _gameState = GameState.Combat;
+    }
+
+    private void DoWordOfRenewal()
+    {
+        if (_player == null) return;
+        _wordOfRenewalUsedThisCombat = true;
+        var before = _player.GetSpellSlots(1);
+        _player.RestoreSpellSlot(1);
+        var after = _player.GetSpellSlots(1);
+        PushCombatLog($"Word of Renewal — L1 spell slots restored ({before} -> {after}/{_player.GetSpellSlotsMax(1)}).");
+        _gameState = GameState.Combat;
+    }
+
+    private void DoLucky()
+    {
+        if (_player == null) return;
+        _luckyUsedThisCombat = true;
+        _luckyPrimed = true;
+        PushCombatLog("Lucky — fate bends! Next attack has Advantage (roll twice, take higher).");
+        _gameState = GameState.Combat;
+    }
+
+    private void DoMetamagic()
+    {
+        if (_player == null) return;
+        _metamagicUsedThisCombat = true;
+        _metamagicPrimed = true;
+        PushCombatLog("Metamagic Adept (Heightened Spell) — next spell's save is made with Disadvantage!");
+        _gameState = GameState.Combat;
+    }
+
+    private void DoSharpshooter()
+    {
+        if (_player == null) return;
+        _sharpshooterUsedThisCombat = true;
+        _sharpshooterPrimed = true;
+        PushCombatLog("Sharpshooter — precision aim! Next attack ignores all armor and deals +5 damage.");
+        _gameState = GameState.Combat;
+    }
+
+    private void DoRecklessAttack()
+    {
+        if (_player == null) return;
+        _recklessAttackUsedThisCombat = true;
+        _playerAttackAdvantage = true;
+        _enemyNextAttackAdvantage = true;
+        PushCombatLog("Reckless Attack — all in! Advantage on your next attack, but the enemy gains Advantage on theirs.");
+        _gameState = GameState.Combat;
+    }
+
+    private void DoOverchannel()
+    {
+        if (_player == null) return;
+        _overchannelUsedThisCombat = true;
+        _overchannelPrimed = true;
+        PushCombatLog("Overchannel — raw power surges through you! Next spell maximizes all damage dice (but costs 1d6 HP).");
+        _gameState = GameState.Combat;
+    }
+
+    private void DoSpiritualWeapon()
+    {
+        if (_player == null) return;
+        _spiritualWeaponUsedThisCombat = true;
+        _spiritualWeaponPrimed = true;
+        PushCombatLog("Spiritual Weapon — a spectral weapon materializes! After your next spell, it strikes.");
+        _gameState = GameState.Combat;
+    }
+
+    private void ResolveSummonAutoAttack()
+    {
+        if (_activeSummon == null || _player == null || !_activeSummon.IsAlive)
+            return;
+        if (_activeSummon.Type.Behavior != SummonBehaviorKind.AutoAttack)
+            return;
+        if (_currentEnemy == null || !_currentEnemy.IsAlive)
+            return;
+
+        var scaleStat = SpellData.ById.TryGetValue(_activeSummon.Type.SourceSpellId, out var spellDef)
+            ? spellDef.ScalingStat
+            : StatName.Wisdom;
+        var statMod = _activeSummon.Type.UseCasterStatMod ? _player.Mod(scaleStat) : 0;
+        var atkBonus = statMod + _activeSummon.Type.AttackBonus + GetProficiencyBonus();
+        var atkBonusStr = atkBonus >= 0 ? $"+{atkBonus}" : $"{atkBonus}";
+
+        var (hitResult, d20, rollTotal) = CombatMath.RollAttack(atkBonus, _currentEnemy.Type.ArmorClass, _rng);
+
+        if (hitResult != AttackRollResult.Miss)
+        {
+            var dice = 0;
+            for (var di = 0; di < _activeSummon.Type.DamageCount; di++)
+                dice += _rng.Next(1, _activeSummon.Type.DamageDice + 1);
+            var dmg = Math.Max(1, dice + Math.Max(0, statMod) + _activeSummon.Type.DamageBonus);
+            _currentEnemy.CurrentHp = Math.Max(0, _currentEnemy.CurrentHp - dmg);
+            PushCombatLog($"{_activeSummon.Type.Name} strikes! d20{atkBonusStr}={rollTotal} hits for {dmg} {_activeSummon.Type.DamageType}.");
+            PushCombatLog($"{_currentEnemy.Type.Name} HP {_currentEnemy.CurrentHp}/{_currentEnemy.Type.MaxHp}.");
+            CheckEnemyDeath();
+        }
+        else
+        {
+            PushCombatLog($"{_activeSummon.Type.Name} misses! d20{atkBonusStr}={rollTotal} vs AC {_currentEnemy.Type.ArmorClass}.");
+        }
+    }
+
+    private void DoBardicInspiration()
+    {
+        if (_player == null) return;
+        _bardicInspirationUsedThisCombat = true;
+        _bardicInspirationPrimed = true;
+        _bardicInspirationForAttack = true;  // default: apply to next attack
+        PushCombatLog("Bardic Inspiration — your own melody steadies you! +1d6 to your next attack roll.");
+        _gameState = GameState.Combat;
     }
 
     private bool TryEnemyUseCombatLoot(Enemy enemy)
@@ -6226,9 +9708,9 @@ public sealed class Game : IDisposable
                 PushCombatLog($"{enemy.Type.Name} uses {loot.Name}. Their attacks grow sharper.");
                 return true;
             }
-            case "mana_draught":
+            case "healing_draught":
             {
-                // Enemies currently do not use mana abilities; keep as droppable loot.
+                // Enemies do not use healing draughts in combat; kept as droppable loot only.
                 return false;
             }
             default:
@@ -6254,7 +9736,7 @@ public sealed class Game : IDisposable
         return null;
     }
 
-    private void DoEnemyAttack(int firstEnemyDamageAbsorb = 0, bool skipFirstEnemyTurn = false)
+    private void DoEnemyAttack(int firstEnemyDamageAbsorb = 0, bool skipFirstEnemyTurn = false, string? suppressedEnemyCombatantId = null, int attackRollPenalty = 0)
     {
         if (_player == null)
         {
@@ -6282,10 +9764,14 @@ public sealed class Game : IDisposable
 
         SetEncounterTurnToPlayer();
         AdvanceEncounterTurn();
-        ResolveEnemyTurnsUntilPlayerTurn(firstEnemyDamageAbsorb, skipFirstEnemyTurn);
+        ResolveEnemyTurnsUntilPlayerTurn(firstEnemyDamageAbsorb, skipFirstEnemyTurn, suppressedEnemyCombatantId, attackRollPenalty);
     }
 
-    private void ResolveEnemyTurnsUntilPlayerTurn(int firstEnemyDamageAbsorb = 0, bool skipFirstEnemyTurn = false)
+    private void ResolveEnemyTurnsUntilPlayerTurn(
+        int firstEnemyDamageAbsorb = 0,
+        bool skipFirstEnemyTurn = false,
+        string? suppressedEnemyCombatantId = null,
+        int attackRollPenalty = 0)
     {
         if (_player == null)
         {
@@ -6299,7 +9785,9 @@ public sealed class Game : IDisposable
         }
 
         var pendingDamageAbsorb = Math.Max(0, firstEnemyDamageAbsorb);
+        var pendingAttackRollPenalty = Math.Max(0, attackRollPenalty);
         var skipNextEnemyTurn = skipFirstEnemyTurn;
+        var pendingSuppressedCombatantId = suppressedEnemyCombatantId;
         var processedEnemyTurns = 0;
 
         while (processedEnemyTurns < EncounterEnemyTurnCapPerPlayerAction)
@@ -6350,14 +9838,32 @@ public sealed class Game : IDisposable
                 enemy.IsAlive &&
                 !ReferenceEquals(enemy, _currentEnemy)));
 
-            if (skipNextEnemyTurn)
+            var skipSpecificEnemyTurn = !string.IsNullOrWhiteSpace(pendingSuppressedCombatantId) &&
+                string.Equals(slot.Id, pendingSuppressedCombatantId, StringComparison.Ordinal);
+            if (skipNextEnemyTurn || skipSpecificEnemyTurn)
             {
                 skipNextEnemyTurn = false;
+                pendingSuppressedCombatantId = skipSpecificEnemyTurn ? null : pendingSuppressedCombatantId;
+                if (!ResolveEnemyStartOfTurnHazards(actingEnemy))
+                {
+                    ResolveEncounterEnemyDeathsImmediate();
+                    return;
+                }
+
+                if (!ResolveEnemyStartOfTurnStatuses(actingEnemy))
+                {
+                    ResolveEncounterEnemyDeathsImmediate();
+                    return;
+                }
+
+                PushCombatLog($"{actingEnemy.Type.Name} loses the turn.");
+                AdvanceEnemyStatusDurations(actingEnemy);
             }
             else
             {
-                ExecuteEnemyTurn(actingEnemy, pendingDamageAbsorb);
+                ExecuteEnemyTurn(actingEnemy, pendingDamageAbsorb, pendingAttackRollPenalty);
                 pendingDamageAbsorb = 0;
+                pendingAttackRollPenalty = 0;
 
                 if (_player == null || !_player.IsAlive || _gameState == GameState.DeathScreen)
                 {
@@ -6380,15 +9886,41 @@ public sealed class Game : IDisposable
         BeginPlayerCombatTurn();
     }
 
-    private void ExecuteEnemyTurn(Enemy enemy, int damageAbsorb)
+    private void ExecuteEnemyTurn(Enemy enemy, int damageAbsorb, int attackRollPenalty = 0)
     {
         if (_player == null || !enemy.IsAlive)
         {
             return;
         }
 
+        if (!ResolveEnemyStartOfTurnHazards(enemy))
+        {
+            ResolveEncounterEnemyDeathsImmediate();
+            return;
+        }
+
+        if (!ResolveEnemyStartOfTurnStatuses(enemy))
+        {
+            ResolveEncounterEnemyDeathsImmediate();
+            return;
+        }
+
+        if (CombatStatusRules.PreventsEnemyAction(enemy.StatusEffects))
+        {
+            PushCombatLog($"{enemy.Type.Name} is stunned and loses the turn.");
+            AdvanceEnemyStatusDurations(enemy);
+            return;
+        }
+
+        if (CombatStatusRules.ForcesEnemyRetreat(enemy.StatusEffects) && TryExecuteEnemyRetreatMovement(enemy))
+        {
+            AdvanceEnemyStatusDurations(enemy);
+            return;
+        }
+
         if (TryEnemyUseCombatLoot(enemy))
         {
+            AdvanceEnemyStatusDurations(enemy);
             return;
         }
 
@@ -6406,6 +9938,11 @@ public sealed class Game : IDisposable
         if (!attackDecision.CanAttack)
         {
             moved = TryExecuteEnemyTacticalMovement(enemy, out _);
+            if (!enemy.IsAlive)
+            {
+                ResolveEncounterEnemyDeathsImmediate();
+                return;
+            }
             if (moved)
             {
                 attackDecision = EncounterEnemyTactics.EvaluateAttackFeasibility(
@@ -6422,47 +9959,407 @@ public sealed class Game : IDisposable
 
         if (!attackDecision.CanAttack)
         {
+            if (!moved && CombatStatusRules.PreventsEnemyMovement(enemy.StatusEffects))
+            {
+                PushCombatLog($"{enemy.Type.Name} is rooted and cannot reposition.");
+                AdvanceEnemyStatusDurations(enemy);
+                return;
+            }
+
             var reason = attackDecision.Validation.BuildBlockedReason();
             var prefix = moved
                 ? $"{enemy.Type.Name} still cannot get a clear attack"
                 : $"{enemy.Type.Name} cannot get a clear attack";
             PushCombatLog($"{prefix} ({reason}).");
+            AdvanceEnemyStatusDurations(enemy);
             return;
         }
 
-        var evadeChance = GetClassEvasionChance(_player);
-        if (evadeChance > 0 && _rng.Next(100) < evadeChance)
+        // --- D&D Attack Roll ---
+        var enemyLootAttackBonus = _enemyLootKits.TryGetValue(enemy, out var enemyLoot_) ? enemyLoot_.AttackBonus : 0;
+        var statusAttackPenalty = CombatStatusRules.GetAttackPenalty(enemy.StatusEffects);
+        var totalEnemyAttackBonus = enemy.Type.AttackBonus + enemyLootAttackBonus + _phase3EnemyAttackBonus
+            - statusAttackPenalty - attackRollPenalty;
+
+        // Countercharm: bard reduces enemy attack bonus by 1d4
+        if (_countercharmAvailable && _player != null && _player.HasFeat("bard_countercharm_feat"))
         {
-            PushCombatLog($"{enemy.Type.Name} attacks, but you evade!");
+            _countercharmAvailable = false;
+            var disruptRoll = _rng.Next(1, 5);
+            totalEnemyAttackBonus -= disruptRoll;
+            PushCombatLog($"Countercharm — your performance disrupts their attack roll by {disruptRoll}!");
+        }
+
+        // Hex: enemy attack penalty
+        if (_hexActive)
+            totalEnemyAttackBonus -= 2;
+
+        var playerAC = _activeTransformation != null
+            ? _activeTransformation.Form.FormAC
+            : GetPlayerArmorClass();
+
+        // Barkskin: AC floor 16
+        if (_barkskinActive && _activeTransformation == null)
+            playerAC = Math.Max(playerAC, 16);
+
+        // Defensive Duelist: add DEX mod to AC before this attack resolves (reaction)
+        if (_defensiveDuelistAvailable && _player != null && _player.HasFeat("defensive_duelist_feat"))
+        {
+            _defensiveDuelistAvailable = false;
+            var dexBonus = Math.Max(0, _player.Mod(StatName.Dexterity));
+            playerAC += dexBonus;
+            PushCombatLog($"Defensive Duelist — +{dexBonus} DEX raises your AC to {playerAC}!");
+        }
+
+        // Consume Crusher/Reckless Attack enemy advantage/disadvantage flags
+        var enemyHasAdv = _enemyNextAttackAdvantage;
+        var enemyHasDisadv = _enemyNextAttackDisadvantage;
+        _enemyNextAttackAdvantage = false;
+        _enemyNextAttackDisadvantage = false;
+
+        // Blur: enemy attacks always have disadvantage while active
+        if (_blurActive && _activeTransformation == null)
+            enemyHasDisadv = true;
+        // Greater Invisibility: enemy attacks with disadvantage
+        if (_greaterInvisibilityActive)
+            enemyHasDisadv = true;
+        // Fog Cloud: enemies in the hazard zone take -3 to attack rolls
+        foreach (var fogHazard in _activeCombatHazards)
+        {
+            if (string.Equals(fogHazard.SourceSpellId, "ranger_fog_cloud", StringComparison.Ordinal) && IsEnemyInsideHazard(fogHazard, enemy))
+            {
+                totalEnemyAttackBonus -= 3;
+                PushCombatLog($"Fog Cloud obscures {enemy.Type.Name}'s aim (−3 attack).");
+                break;
+            }
+        }
+        if (enemyHasAdv) PushCombatLog($"{enemy.Type.Name} has Advantage on this attack!");
+        if (enemyHasDisadv) PushCombatLog($"{enemy.Type.Name} is staggered — Disadvantage on this attack!");
+
+        // Invisibility: 15% flat miss chance before the attack resolves
+        if (_invisibilityActive && _rng.Next(100) < 15)
+        {
+            PushCombatLog($"Invisibility — {enemy.Type.Name} can't pin down your position and misses!");
+            AdvanceEnemyStatusDurations(enemy);
             return;
         }
 
-        var armorStyleDefense = GetArmorStateDefenseBonus(_player);
-        var totalDefense = _player.DefenseBonus + GetClassDefenseBonus(_player) + _runDefenseBonus + armorStyleDefense + GetConditionDefenseModifier();
-        var enemyAttackBonus = _enemyLootKits.TryGetValue(enemy, out var enemyLoot)
-            ? enemyLoot.AttackBonus
-            : 0;
-        var rawEnemyRoll = enemy.Type.Attack + enemyAttackBonus + _phase3EnemyAttackBonus + _rng.Next(4) - 1;
+        // Sanctuary: enemy must pass WIS save or skip attack entirely
+        if (_sanctuaryActive && _player != null)
+        {
+            var sanctuaryDC = 8 + Math.Max(0, _player.Mod(StatName.Wisdom)) + _player.ProficiencyBonus;
+            var enemySave = _rng.Next(1, 21) + enemy.Type.AttackBonus / 2;
+            if (enemySave < sanctuaryDC)
+            {
+                PushCombatLog($"Sanctuary — {enemy.Type.Name} fails WIS save ({enemySave} vs DC {sanctuaryDC}) and cannot attack!");
+                AdvanceEnemyStatusDurations(enemy);
+                return;
+            }
+            PushCombatLog($"Sanctuary — {enemy.Type.Name} breaks through (save {enemySave} vs DC {sanctuaryDC}).");
+        }
+
+        var (enemyHitResult, enemyD20, enemyRollTotal) = CombatMath.RollAttack(totalEnemyAttackBonus, playerAC, _rng,
+            advantage: enemyHasAdv, disadvantage: enemyHasDisadv);
+
+        // Mark that at least one enemy has acted — used by Assassin feat
+        _enemyHasActedThisCombat = true;
+
+        if (enemyHitResult == AttackRollResult.Miss)
+        {
+            PushCombatLog($"{enemy.Type.Name} misses! d20:{enemyD20}+{totalEnemyAttackBonus}={enemyRollTotal} vs AC {playerAC}.");
+
+            // Sentinel: counter-attack when enemy misses (opportunity attack on failed attack)
+            if (_sentinelAvailable && _player != null && _player.HasFeat("sentinel_feat") && _player.IsAlive)
+            {
+                _sentinelAvailable = false;
+                var (counterDamage, counterCrit, _, _, _) = CalcPlayerDamage();
+                enemy.CurrentHp = Math.Max(0, enemy.CurrentHp - counterDamage);
+                var counterCritTag = counterCrit ? " CRIT!" : string.Empty;
+                PushCombatLog($"Sentinel — you exploit the opening for {counterDamage}!{counterCritTag}");
+                PushCombatLog($"{enemy.Type.Name} HP {enemy.CurrentHp}/{enemy.Type.MaxHp}.");
+                if (!enemy.IsAlive) { ResolveEncounterEnemyDeathsImmediate(); return; }
+            }
+
+            AdvanceEnemyStatusDurations(enemy);
+            return;
+        }
+
+        // Mirror Image: probabilistic hit absorption
+        if (_mirrorImageCharges > 0)
+        {
+            var mirrorChance = _mirrorImageCharges * 25;
+            if (_rng.Next(100) < mirrorChance)
+            {
+                _mirrorImageCharges--;
+                PushCombatLog($"Mirror Image — a duplicate shatters! ({_mirrorImageCharges} remaining)");
+                if (_mirrorImageCharges == 0)
+                    PushCombatLog("All mirror images have been destroyed.");
+                AdvanceEnemyStatusDurations(enemy);
+                return;
+            }
+        }
+
+        // Blink: 30% chance attack misses while phased out
+        if (_blinkActive && _rng.Next(100) < 30)
+        {
+            PushCombatLog($"Blink — you phase out! {enemy.Type.Name}'s attack passes through harmlessly.");
+            AdvanceEnemyStatusDurations(enemy);
+            return;
+        }
+
+        // Major Image: 25% chance attack targets the decoy instead
+        if (_majorImageActive && _rng.Next(100) < 25)
+        {
+            PushCombatLog($"Major Image — the illusion absorbs {enemy.Type.Name}'s attack!");
+            AdvanceEnemyStatusDurations(enemy);
+            return;
+        }
+
+
+        // Shield Expert: once per combat — downgrade one enemy crit to a normal hit
+        if (enemyHitResult == AttackRollResult.CriticalHit && _shieldExpertAvailable && _player != null && _player.HasFeat("shield_expert_feat"))
+        {
+            _shieldExpertAvailable = false;
+            enemyHitResult = AttackRollResult.Hit;
+            PushCombatLog("Shield Expert — you absorb the critical blow! Downgraded to a normal hit.");
+        }
+
+        // Hit or critical — roll damage
+        var enemyIsCrit = enemyHitResult == AttackRollResult.CriticalHit;
+        var enemyDiceCount = enemy.Type.AttackDiceCount * (enemyIsCrit ? 2 : 1);
+        int enemyDiceTotal = 0;
+        for (int i = 0; i < enemyDiceCount; i++)
+            enemyDiceTotal += _rng.Next(1, Math.Max(2, enemy.Type.DamageDice + 1));
+        var critLabel = enemyIsCrit ? " CRITICAL HIT!" : string.Empty;
+        PushCombatLog($"{enemy.Type.Name} hits!{critLabel} d20:{enemyD20}+{totalEnemyAttackBonus}={enemyRollTotal} vs AC {playerAC}.");
+        PushCombatLog($"Damage: {enemyDiceCount}d{enemy.Type.DamageDice} ({enemyDiceTotal}) + {enemy.Type.DamageBonus} bonus.");
+
         var clampedAbsorb = Math.Max(0, damageAbsorb);
-        var adjustedRaw = Math.Max(0, rawEnemyRoll - clampedAbsorb);
-        var damage = clampedAbsorb > 0
-            ? Math.Max(0, CombatMath.CalculateEnemyDamage(adjustedRaw, totalDefense, minimumDamage: 0))
-            : CombatMath.CalculateEnemyDamage(rawEnemyRoll, totalDefense);
-
-        _player.CurrentHp = Math.Max(0, _player.CurrentHp - damage);
+        var damage = Math.Max(1, enemyDiceTotal + enemy.Type.DamageBonus);
         if (clampedAbsorb > 0)
+            damage = Math.Max(0, damage - clampedAbsorb);
+
+        // Uncanny Dodge: once per combat, halve one incoming hit (D&D: reaction to halve damage)
+        if (_uncannyDodgeAvailable && _player != null && _player.HasFeat("rogue_uncanny_dodge_feat") && damage > 0)
         {
-            PushCombatLog($"Mana Shield absorbs {clampedAbsorb}; you take {damage}.");
-            PushCombatLog($"Enemy roll {rawEnemyRoll} - absorb {clampedAbsorb} - defense {totalDefense}.");
+            _uncannyDodgeAvailable = false;
+            damage = Math.Max(1, damage / 2);
+            PushCombatLog($"Uncanny Dodge — you deflect half the blow! Damage halved to {damage}.");
+        }
+
+        // Indomitable: once per combat, reduce hit by player level (D&D: reroll failed save adding class level)
+        if (_indomitableAvailable && _player != null && _player.HasFeat("warrior_indomitable_feat") && damage > 0)
+        {
+            _indomitableAvailable = false;
+            var levelReduction = _player.Level;
+            damage = Math.Max(0, damage - levelReduction);
+            PushCombatLog($"Indomitable — warrior's will reduces {levelReduction} damage!");
+        }
+
+        if (_player == null) return;
+
+        // Capture pre-reduction damage for reactive trigger
+        var originalEnemyDamage = damage;
+
+        // Counterspell: one-use damage halving (any source)
+        if (_counterspellPrimed && damage > 0)
+        {
+            _counterspellPrimed = false;
+            damage = Math.Max(0, damage / 2);
+            PushCombatLog($"Counterspell — the magical ward halves the blow! ({damage} damage taken).");
+        }
+
+        // Protection from Energy: half damage if matching element (approximated via damage tag keyword)
+        if (_protEnergyActive && !string.IsNullOrWhiteSpace(_protEnergyElement) && damage > 0)
+        {
+            // Compare by checking if enemy damage tag contains the element keyword
+            var enemyDmgTag = enemy.Type.DamageType ?? string.Empty;
+            var matchesElement = enemyDmgTag.Contains(_protEnergyElement, StringComparison.OrdinalIgnoreCase);
+            if (matchesElement)
+            {
+                damage = Math.Max(0, damage / 2);
+                PushCombatLog($"Protection from Energy absorbs half the {_protEnergyElement} damage.");
+            }
+        }
+
+        // Stoneskin: flat −3 damage reduction
+        if (_stoneskinActive && damage > 0)
+        {
+            var reduced = Math.Min(damage, 3);
+            damage -= reduced;
+            PushCombatLog($"Stoneskin absorbs {reduced} damage.");
+        }
+
+        // Cutting Words: one-use 1d8 damage reduction (consumed)
+        if (_cuttingWordsPrimed && damage > 0)
+        {
+            _cuttingWordsPrimed = false;
+            var cutReduction = _rng.Next(1, 9);
+            var actualCut = Math.Min(damage, cutReduction);
+            damage -= actualCut;
+            PushCombatLog($"Cutting Words — you mock the enemy, reducing damage by {actualCut}!");
+        }
+
+        // Transformation temp HP absorbs damage before real HP
+        if (_activeTransformation != null)
+        {
+            var dmgAfterResist = damage;
+            if (_activeTransformation.Form.Special == FormSpecialKind.DamageResist)
+                dmgAfterResist = Math.Max(0, damage - _activeTransformation.Form.SpecialValue);
+            if (_activeTransformation.Form.Id == "form_mist")
+                dmgAfterResist = Math.Max(0, dmgAfterResist - 3);
+
+            var tempLost = Math.Min(_activeTransformation.TempHpRemaining, dmgAfterResist);
+            _activeTransformation.TempHpRemaining -= tempLost;
+            PushCombatLog($"Form absorbs {tempLost} damage ({_activeTransformation.TempHpRemaining} temp HP left).");
+
+            if (_activeTransformation.TempHpRemaining <= 0)
+            {
+                RevertTransformation("Your form shatters!");
+                EndActiveConcentration("Transformation broken by damage.");
+            }
+
+            if (clampedAbsorb > 0)
+                PushCombatLog($"Mana Shield absorbs {clampedAbsorb}.");
+            PushCombatLog($"Your HP {_player.CurrentHp}/{_player.MaxHp}.");
+            TryRollDungeonConditionFromEnemyHit(damage);
         }
         else
         {
-            PushCombatLog($"{enemy.Type.Name} hits for {damage}.");
-            PushCombatLog($"Enemy roll {rawEnemyRoll} - defense {totalDefense}.");
+            // Armor of Agathys: separate frost temp HP pool (absorbs first)
+            if (_armorOfAgathysTempHp > 0 && damage > 0)
+            {
+                var agathysAbsorbed = Math.Min(_armorOfAgathysTempHp, damage);
+                _armorOfAgathysTempHp -= agathysAbsorbed;
+                damage -= agathysAbsorbed;
+                PushCombatLog($"Armor of Agathys absorbs {agathysAbsorbed} damage ({_armorOfAgathysTempHp} frost HP remaining).");
+            }
+
+            // Temp HP absorption (False Life, Heroism) before real HP
+            if (_playerTempHp > 0 && damage > 0)
+            {
+                var absorbed = Math.Min(_playerTempHp, damage);
+                _playerTempHp -= absorbed;
+                damage -= absorbed;
+                if (absorbed > 0)
+                    PushCombatLog($"Temp HP absorbs {absorbed} damage ({_playerTempHp} remaining).");
+            }
+
+            _player.CurrentHp = Math.Max(0, _player.CurrentHp - damage);
+
+            // Death Ward: prevent lethal damage — set HP to 1 instead
+            if (_deathWardActive && _player.CurrentHp <= 0)
+            {
+                _player.CurrentHp = 1;
+                _deathWardActive = false;
+                PushCombatLog("Death Ward triggers — you cling to life at 1 HP!");
+            }
+
+            if (clampedAbsorb > 0)
+            {
+                PushCombatLog($"Mana Shield absorbs {clampedAbsorb}; you take {damage}.");
+            }
+
+            PushCombatLog($"Your HP {_player.CurrentHp}/{_player.MaxHp}.");
+            TryResolveConcentrationAfterDamage(damage, enemy.Type.Name);
+            TryRollDungeonConditionFromEnemyHit(damage);
         }
 
-        PushCombatLog($"Your HP {_player.CurrentHp}/{_player.MaxHp}.");
-        TryRollDungeonConditionFromEnemyHit(damage);
+        // Goblin Slinger: 30% chance to poison on a hit
+        if (damage > 0 && string.Equals(enemy.Type.Name, "Goblin Slinger", StringComparison.Ordinal) && _rng.Next(100) < 30)
+        {
+            ApplyPlayerCondition(PlayerConditionKind.Poisoned, potency: 2, duration: 3);
+            PushCombatLog("The dart was coated with poison! Poisoned for 3 turns (−2 HP/turn).");
+        }
+
+        // Riposte: once per combat — counter-attack for half weapon damage when hit
+        if (_riposteAvailable && _player.HasFeat("riposte_feat") && _player.IsAlive && damage > 0 && enemy.IsAlive)
+        {
+            _riposteAvailable = false;
+            var (riposteDmg, _, _, _, _) = CalcPlayerDamage();
+            var halfRiposte = Math.Max(1, riposteDmg / 2);
+            enemy.CurrentHp = Math.Max(0, enemy.CurrentHp - halfRiposte);
+            PushCombatLog($"Riposte! You strike back for {halfRiposte} damage!");
+            PushCombatLog($"{enemy.Type.Name} HP {enemy.CurrentHp}/{enemy.Type.MaxHp}.");
+            if (!enemy.IsAlive) { ResolveEncounterEnemyDeathsImmediate(); return; }
+        }
+
+        // ── Reactive Damage: spells that punish attackers ──
+        if (enemy.IsAlive && originalEnemyDamage > 0)
+        {
+            var reactiveDamage = 0;
+
+            // Hellish Rebuke (primed, consumed)
+            if (_hellishRebukePrimed)
+            {
+                _hellishRebukePrimed = false;
+                var rebukeRoll = _rng.Next(1, 7) + _rng.Next(1, 7);
+                reactiveDamage += rebukeRoll;
+                PushCombatLog($"Hellish Rebuke — flames engulf the attacker for {rebukeRoll} fire damage!");
+            }
+
+            // Wrath of the Storm (primed, consumed)
+            if (_wrathOfStormPrimed)
+            {
+                _wrathOfStormPrimed = false;
+                var wrathRoll = _rng.Next(1, 9) + _rng.Next(1, 9);
+                reactiveDamage += wrathRoll;
+                PushCombatLog($"Wrath of the Storm — lightning strikes back for {wrathRoll} damage!");
+            }
+
+            // Holy Rebuke (primed, consumed — also heals player 1d4)
+            if (_holyRebukePrimed && _player != null)
+            {
+                _holyRebukePrimed = false;
+                var holyRoll = _rng.Next(1, 7) + _rng.Next(1, 7);
+                reactiveDamage += holyRoll;
+                var healRoll = _rng.Next(1, 5);
+                _player.CurrentHp = Math.Min(_player.MaxHp, _player.CurrentHp + healRoll);
+                PushCombatLog($"Holy Rebuke — radiant wrath for {holyRoll} + you heal {healRoll} HP!");
+            }
+
+            // Armor of Agathys (persistent while frost temp HP > 0)
+            if (_armorOfAgathysTempHp > 0)
+            {
+                var coldRoll = _rng.Next(1, 9);
+                reactiveDamage += coldRoll;
+                PushCombatLog($"Armor of Agathys — frost bites the attacker for {coldRoll} cold damage!");
+            }
+
+            // Fire Shield (persistent, no concentration)
+            if (_fireShieldActive)
+            {
+                var fireRoll = _rng.Next(1, 9) + _rng.Next(1, 9);
+                reactiveDamage += fireRoll;
+                PushCombatLog($"Fire Shield — flames sear the attacker for {fireRoll} fire damage!");
+            }
+
+            // Thorns (persistent, concentration)
+            if (_thornsActive)
+            {
+                var thornRoll = _rng.Next(1, 7);
+                reactiveDamage += thornRoll;
+                PushCombatLog($"Thorns — vines lash back for {thornRoll} piercing damage!");
+            }
+
+            // Spirit Shroud (persistent, concentration)
+            if (_spiritShroudActive)
+            {
+                var shroudRoll = _rng.Next(1, 7);
+                reactiveDamage += shroudRoll;
+                PushCombatLog($"Spirit Shroud — vengeful spirits strike for {shroudRoll} radiant damage!");
+            }
+
+            // Apply total reactive damage
+            if (reactiveDamage > 0)
+            {
+                enemy.CurrentHp = Math.Max(0, enemy.CurrentHp - reactiveDamage);
+                PushCombatLog($"{enemy.Type.Name} HP {enemy.CurrentHp}/{enemy.Type.MaxHp} after reactive damage.");
+                if (!enemy.IsAlive) { ResolveEncounterEnemyDeathsImmediate(); return; }
+            }
+        }
+
+        AdvanceEnemyStatusDurations(enemy);
     }
 
     private void DoFlee()
@@ -6723,7 +10620,7 @@ public sealed class Game : IDisposable
         {
             ResetEncounterContext();
             _selectionMessage = string.Empty;
-            _gameState = GameState.LevelUp;
+            BeginLevelUpFlow();
         }
         else
         {
@@ -6740,7 +10637,6 @@ public sealed class Game : IDisposable
         _defeatedEnemyPending = null;
         _respawnEnemiesAt = -1;
         _currentEnemy = null;
-        _enemyPoisoned = 0;
         _warCryAvailable = false;
         ResetEncounterContext();
         PushCombatLog("You have been defeated...");
@@ -6751,37 +10647,177 @@ public sealed class Game : IDisposable
     {
         if (_player == null) return;
 
-        if (Pressed(KeyUp))
+        var levelUpRowCount = StatOrder.Length + 3;
+        if (PressedOrRepeat(KeyUp))
         {
-            _selectedStatIndex = (_selectedStatIndex - 1 + StatOrder.Length) % StatOrder.Length;
+            _selectedStatIndex = (_selectedStatIndex - 1 + levelUpRowCount) % levelUpRowCount;
             return;
         }
 
-        if (Pressed(KeyDown))
+        if (PressedOrRepeat(KeyDown))
         {
-            _selectedStatIndex = (_selectedStatIndex + 1) % StatOrder.Length;
+            _selectedStatIndex = (_selectedStatIndex + 1) % levelUpRowCount;
+            return;
+        }
+
+        if (Pressed(KeyEscape))
+        {
+            _selectionMessage = TryUndoLastLevelUpStatPoint()
+                ? "Last stat point refunded."
+                : "No level-up point to undo.";
+            return;
+        }
+
+        if (Pressed(KeyLeft))
+        {
+            if (_selectedStatIndex < StatOrder.Length)
+            {
+                var chosenStat = StatOrder[_selectedStatIndex];
+                _selectionMessage = TryDecreaseSelectedLevelUpStat()
+                    ? $"{chosenStat} refunded."
+                    : "That stat has no level-up point assigned.";
+            }
+            return;
+        }
+
+        if (Pressed(KeyRight))
+        {
+            if (_selectedStatIndex < StatOrder.Length)
+            {
+                var chosenStat = StatOrder[_selectedStatIndex];
+                _selectionMessage = TryIncreaseSelectedLevelUpStat()
+                    ? $"{chosenStat} increased."
+                    : "No stat points left.";
+            }
             return;
         }
 
         if (!Pressed(KeyEnter)) return;
 
-        if (_player.StatPoints <= 0)
+        if (_selectedStatIndex < StatOrder.Length)
         {
-            _selectionMessage = "No stat points left. Moving to feat/spell/skill picks.";
-            PreparePostLevelUpChoices();
+            var chosenStat = StatOrder[_selectedStatIndex];
+            _selectionMessage = TryIncreaseSelectedLevelUpStat()
+                ? $"{chosenStat} increased."
+                : "No stat points left.";
             return;
         }
 
-        var chosenStat = StatOrder[_selectedStatIndex];
-        if (_player.IncreaseStat(chosenStat))
+        if (_selectedStatIndex == StatOrder.Length)
         {
-            _selectionMessage = $"{chosenStat} increased.";
+            _selectionMessage = TryUndoLastLevelUpStatPoint()
+                ? "Last stat point refunded."
+                : "No level-up point to undo.";
+            return;
         }
 
-        if (_player.StatPoints == 0)
+        if (_selectedStatIndex == StatOrder.Length + 1)
         {
-            PreparePostLevelUpChoices();
+            _selectionMessage = ResetLevelUpStatAllocations()
+                ? "Level-up stat allocation reset."
+                : "Nothing to reset.";
+            return;
         }
+
+        if (_player.StatPoints > 0)
+        {
+            _selectionMessage = $"Spend all stat points first ({_player.StatPoints} remaining).";
+            return;
+        }
+
+        _selectionMessage = "Stat allocation locked. Moving to feat/spell/skill picks.";
+        _levelUpSessionActive = false;
+        PreparePostLevelUpChoices();
+    }
+
+    private void BeginLevelUpFlow()
+    {
+        Array.Clear(_levelUpAllocatedStats, 0, _levelUpAllocatedStats.Length);
+        _levelUpStatAllocationOrder.Clear();
+        _selectedStatIndex = 0;
+        _selectionMessage = "Allocate stats, then continue when ready.";
+        _levelUpSessionActive = true;
+        _gameState = GameState.LevelUp;
+    }
+
+    private bool TryIncreaseSelectedLevelUpStat()
+    {
+        if (_player == null || _selectedStatIndex < 0 || _selectedStatIndex >= StatOrder.Length)
+        {
+            return false;
+        }
+
+        var stat = StatOrder[_selectedStatIndex];
+        if (!_player.IncreaseStat(stat))
+        {
+            return false;
+        }
+
+        _levelUpAllocatedStats[_selectedStatIndex] += 1;
+        _levelUpStatAllocationOrder.Add(_selectedStatIndex);
+        return true;
+    }
+
+    private bool TryDecreaseSelectedLevelUpStat()
+    {
+        if (_player == null || _selectedStatIndex < 0 || _selectedStatIndex >= StatOrder.Length)
+        {
+            return false;
+        }
+
+        if (_levelUpAllocatedStats[_selectedStatIndex] <= 0)
+        {
+            return false;
+        }
+
+        var stat = StatOrder[_selectedStatIndex];
+        if (!_player.RefundAllocatedStatPoint(stat))
+        {
+            return false;
+        }
+
+        _levelUpAllocatedStats[_selectedStatIndex] -= 1;
+        for (var i = _levelUpStatAllocationOrder.Count - 1; i >= 0; i--)
+        {
+            if (_levelUpStatAllocationOrder[i] != _selectedStatIndex)
+            {
+                continue;
+            }
+
+            _levelUpStatAllocationOrder.RemoveAt(i);
+            break;
+        }
+
+        return true;
+    }
+
+    private bool TryUndoLastLevelUpStatPoint()
+    {
+        if (_levelUpStatAllocationOrder.Count == 0)
+        {
+            return false;
+        }
+
+        _selectedStatIndex = _levelUpStatAllocationOrder[^1];
+        return TryDecreaseSelectedLevelUpStat();
+    }
+
+    private bool ResetLevelUpStatAllocations()
+    {
+        if (_levelUpStatAllocationOrder.Count == 0)
+        {
+            return false;
+        }
+
+        while (_levelUpStatAllocationOrder.Count > 0)
+        {
+            if (!TryUndoLastLevelUpStatPoint())
+            {
+                break;
+            }
+        }
+
+        return true;
     }
 
     private void PreparePostLevelUpChoices()
@@ -6914,14 +10950,14 @@ public sealed class Game : IDisposable
             return;
         }
 
-        if (Pressed(KeyUp))
+        if (PressedOrRepeat(KeyUp))
         {
             _selectedSpellLearnIndex = (_selectedSpellLearnIndex - 1 + _spellLearnChoices.Count) % _spellLearnChoices.Count;
             EnsureSpellLearnSelectionVisible(_spellLearnChoices.Count);
             return;
         }
 
-        if (Pressed(KeyDown))
+        if (PressedOrRepeat(KeyDown))
         {
             _selectedSpellLearnIndex = (_selectedSpellLearnIndex + 1) % _spellLearnChoices.Count;
             EnsureSpellLearnSelectionVisible(_spellLearnChoices.Count);
@@ -6982,60 +11018,27 @@ public sealed class Game : IDisposable
     {
         if (_player == null) return;
 
-        _skillChoices.Clear();
-        var unlearned = SkillBook.All
-            .Where(skill => !_player.HasSkill(skill.Id))
-            .OrderBy(skill => skill.Name);
-        _skillChoices.AddRange(unlearned);
-        _selectedSkillIndex = 0;
-        _skillMenuOffset = 0;
-        _selectionMessage = string.Empty;
+        // Auto-grant class talent(s) for current level
+        var beforeCount = _player.Skills.Count;
+        _player.GrantClassTalentsForLevel(_player.Level);
+        var newTalents = _player.Skills.Skip(beforeCount).ToList();
 
-        if (_skillChoices.Count == 0)
+        if (newTalents.Count == 0)
         {
             EnterPlayingState("levelup_complete");
             return;
         }
 
+        // Show notification screen listing what was granted
+        _skillChoices.Clear();
+        _skillChoices.AddRange(newTalents);
+        _selectionMessage = string.Empty;
         _gameState = GameState.SkillSelection;
     }
 
     private void HandleSkillSelectionInput()
     {
-        if (_player == null)
-            return;
-
-        if (_skillChoices.Count == 0)
-        {
-            EnterPlayingState("levelup_complete");
-            return;
-        }
-
-        if (Pressed(KeyUp))
-        {
-            _selectedSkillIndex = (_selectedSkillIndex - 1 + _skillChoices.Count) % _skillChoices.Count;
-            EnsureSkillSelectionVisible(_skillChoices.Count);
-            return;
-        }
-
-        if (Pressed(KeyDown))
-        {
-            _selectedSkillIndex = (_selectedSkillIndex + 1) % _skillChoices.Count;
-            EnsureSkillSelectionVisible(_skillChoices.Count);
-            return;
-        }
-
-        if (!Pressed(KeyEnter)) return;
-
-        var chosen = _skillChoices[_selectedSkillIndex];
-        if (_player.HasSkill(chosen.Id))
-        {
-            _selectionMessage = "That skill is already learned.";
-            return;
-        }
-
-        _player.LearnSkill(chosen);
-        _selectionMessage = $"Learned skill: {chosen.Name}.";
+        if (_player == null || !Pressed(KeyEnter)) return;
         EnterPlayingState("levelup_complete");
     }
 
@@ -7173,6 +11176,7 @@ public sealed class Game : IDisposable
                 TryManualSaveSlot(target);
                 RefreshPauseSaveEntries();
                 RefreshPauseLoadEntries();
+                EnsurePauseSaveSelectionVisible();
                 return true;
 
             case PauseConfirmAction.LoadRun:
@@ -7186,6 +11190,7 @@ public sealed class Game : IDisposable
                 if (_gameState == GameState.PauseMenu)
                 {
                     RefreshPauseLoadEntries();
+                    EnsurePauseLoadSelectionVisible();
                 }
 
                 return true;
@@ -7249,21 +11254,26 @@ public sealed class Game : IDisposable
     private void HandlePauseInventoryInput()
     {
         var optionCount = _inventoryItems.Count + 1; // + Back
+        _pauseMenuIndex = Math.Clamp(_pauseMenuIndex, 0, Math.Max(0, optionCount - 1));
+        EnsurePauseInventorySelectionVisible();
+
         if (Pressed(KeyEscape))
         {
             BackToPauseRoot(1);
             return;
         }
 
-        if (Pressed(KeyUp))
+        if (PressedOrRepeat(KeyUp))
         {
             _pauseMenuIndex = (_pauseMenuIndex - 1 + optionCount) % optionCount;
+            EnsurePauseInventorySelectionVisible();
             return;
         }
 
-        if (Pressed(KeyDown))
+        if (PressedOrRepeat(KeyDown))
         {
             _pauseMenuIndex = (_pauseMenuIndex + 1) % optionCount;
+            EnsurePauseInventorySelectionVisible();
             return;
         }
 
@@ -7287,21 +11297,26 @@ public sealed class Game : IDisposable
     private void HandlePauseSaveInput()
     {
         var optionCount = _pauseSaveEntries.Count + 1; // + Back
+        _pauseMenuIndex = Math.Clamp(_pauseMenuIndex, 0, Math.Max(0, optionCount - 1));
+        EnsurePauseSaveSelectionVisible();
+
         if (Pressed(KeyEscape))
         {
             BackToPauseRoot(2);
             return;
         }
 
-        if (Pressed(KeyUp))
+        if (PressedOrRepeat(KeyUp))
         {
             _pauseMenuIndex = (_pauseMenuIndex - 1 + optionCount) % optionCount;
+            EnsurePauseSaveSelectionVisible();
             return;
         }
 
-        if (Pressed(KeyDown))
+        if (PressedOrRepeat(KeyDown))
         {
             _pauseMenuIndex = (_pauseMenuIndex + 1) % optionCount;
+            EnsurePauseSaveSelectionVisible();
             return;
         }
 
@@ -7325,26 +11340,32 @@ public sealed class Game : IDisposable
         TryManualSaveSlot(selected.ManualSlot);
         RefreshPauseSaveEntries();
         RefreshPauseLoadEntries();
+        EnsurePauseSaveSelectionVisible();
     }
 
     private void HandlePauseLoadInput()
     {
         var optionCount = _pauseLoadEntries.Count + 1; // + Back
+        _pauseMenuIndex = Math.Clamp(_pauseMenuIndex, 0, Math.Max(0, optionCount - 1));
+        EnsurePauseLoadSelectionVisible();
+
         if (Pressed(KeyEscape))
         {
             BackToPauseRoot(3);
             return;
         }
 
-        if (Pressed(KeyUp))
+        if (PressedOrRepeat(KeyUp))
         {
             _pauseMenuIndex = (_pauseMenuIndex - 1 + optionCount) % optionCount;
+            EnsurePauseLoadSelectionVisible();
             return;
         }
 
-        if (Pressed(KeyDown))
+        if (PressedOrRepeat(KeyDown))
         {
             _pauseMenuIndex = (_pauseMenuIndex + 1) % optionCount;
+            EnsurePauseLoadSelectionVisible();
             return;
         }
 
@@ -7536,32 +11557,26 @@ public sealed class Game : IDisposable
                     _pauseMessage = $"Used {item.Name}: HP +{gained} ({item.Quantity} left).";
                     return;
                 }
-                case "mana_draught":
+                case "healing_draught":
                 {
-                    if (_player.MaxMana <= 0)
+                    if (_player.CurrentHp >= _player.MaxHp)
                     {
-                        _pauseMessage = $"{_player.CharacterClass.Name} has no mana pool.";
+                        _pauseMessage = "HP is already full.";
                         return;
                     }
 
-                    if (_player.CurrentMana >= _player.MaxMana)
-                    {
-                        _pauseMessage = "MP is already full.";
-                        return;
-                    }
-
-                    var restoreAmount = Math.Max(4, (int)Math.Ceiling(_player.MaxMana * 0.35));
-                    var before = _player.CurrentMana;
-                    _player.CurrentMana = Math.Min(_player.MaxMana, _player.CurrentMana + restoreAmount);
-                    var gained = _player.CurrentMana - before;
+                    var restoreAmount = Math.Max(4, (int)Math.Ceiling(_player.MaxHp * 0.35));
+                    var before = _player.CurrentHp;
+                    _player.CurrentHp = Math.Min(_player.MaxHp, _player.CurrentHp + restoreAmount);
+                    var gained = _player.CurrentHp - before;
                     if (gained <= 0)
                     {
-                        _pauseMessage = "Mana Draught had no effect.";
+                        _pauseMessage = "Healing Draught had no effect.";
                         return;
                     }
 
                     item.Quantity -= 1;
-                    _pauseMessage = $"Used {item.Name}: MP +{gained} ({item.Quantity} left).";
+                    _pauseMessage = $"Used {item.Name}: HP +{gained} ({item.Quantity} left).";
                     return;
                 }
                 case "sharpening_oil":
@@ -7655,15 +11670,7 @@ public sealed class Game : IDisposable
             case "warding_charm":
                 _runDefenseBonus = Math.Max(0, _runDefenseBonus + direction);
                 return;
-            case "leather_jerkin":
-                _runDefenseBonus = Math.Max(0, _runDefenseBonus + direction);
-                return;
-            case "brigandine_coat":
-                _runDefenseBonus = Math.Max(0, _runDefenseBonus + direction * 2);
-                return;
-            case "plate_harness":
-                _runDefenseBonus = Math.Max(0, _runDefenseBonus + direction * 3);
-                return;
+            // leather_jerkin / brigandine_coat / plate_harness: defense handled via GetArmorStateDefenseBonus — no _runDefenseBonus delta
             case "hunter_cloak":
                 _runCritBonus = Math.Max(0, _runCritBonus + direction);
                 _runFleeBonus = Math.Max(0, _runFleeBonus + direction * 3);
@@ -7679,6 +11686,15 @@ public sealed class Game : IDisposable
                 return;
             case "guard_ring":
                 _runDefenseBonus = Math.Max(0, _runDefenseBonus + direction);
+                return;
+            case "iron_greaves":
+                _runDefenseBonus = Math.Max(0, _runDefenseBonus + direction);
+                return;
+            case "thieves_gloves":
+                _runMeleeBonus = Math.Max(0, _runMeleeBonus + direction);
+                return;
+            case "serpent_bracers":
+                _runSpellBonus = Math.Max(0, _runSpellBonus + direction);
                 return;
         }
     }
@@ -7738,11 +11754,140 @@ public sealed class Game : IDisposable
         };
     }
 
+    private int GetPauseListBackY()
+    {
+        var panelY = UiLayout.PausePanelInsetY;
+        var panelH = Raylib.GetScreenHeight() - UiLayout.PausePanelInsetY * 2;
+        var reserveBottom = string.IsNullOrWhiteSpace(_pauseMessage) ? 86 : 122;
+        return Math.Max(panelY + 120, panelY + panelH - reserveBottom);
+    }
+
+    private static int GetPauseVisibleRowCount(int listY, int backY, int rowStep, int rowHeight)
+    {
+        var count = 0;
+        for (var rowY = listY; rowY + rowHeight <= backY - 8; rowY += rowStep)
+        {
+            count += 1;
+        }
+
+        return Math.Max(1, count);
+    }
+
+    private int GetPauseInventoryVisibleCount()
+    {
+        var listY = UiLayout.PausePanelInsetY + 74;
+        return GetPauseVisibleRowCount(listY, GetPauseListBackY(), 58, 54);
+    }
+
+    private int GetPauseSaveVisibleCount()
+    {
+        var listY = UiLayout.PausePanelInsetY + 74;
+        return GetPauseVisibleRowCount(listY, GetPauseListBackY(), 62, 56);
+    }
+
+    private int GetPauseLoadVisibleCount()
+    {
+        var listY = UiLayout.PausePanelInsetY + 74;
+        return GetPauseVisibleRowCount(listY, GetPauseListBackY(), 62, 56);
+    }
+
+    private void EnsurePauseInventorySelectionVisible()
+    {
+        var itemCount = _inventoryItems.Count;
+        var visibleCount = GetPauseInventoryVisibleCount();
+        if (itemCount <= visibleCount)
+        {
+            _pauseInventoryOffset = 0;
+            return;
+        }
+
+        var backIndex = itemCount;
+        _pauseMenuIndex = Math.Clamp(_pauseMenuIndex, 0, backIndex);
+        if (_pauseMenuIndex == backIndex)
+        {
+            _pauseInventoryOffset = Math.Max(0, itemCount - visibleCount);
+            return;
+        }
+
+        if (_pauseMenuIndex < _pauseInventoryOffset)
+        {
+            _pauseInventoryOffset = _pauseMenuIndex;
+        }
+        else if (_pauseMenuIndex >= _pauseInventoryOffset + visibleCount)
+        {
+            _pauseInventoryOffset = _pauseMenuIndex - visibleCount + 1;
+        }
+
+        _pauseInventoryOffset = Math.Clamp(_pauseInventoryOffset, 0, Math.Max(0, itemCount - visibleCount));
+    }
+
+    private void EnsurePauseSaveSelectionVisible()
+    {
+        var itemCount = _pauseSaveEntries.Count;
+        var visibleCount = GetPauseSaveVisibleCount();
+        if (itemCount <= visibleCount)
+        {
+            _pauseSaveOffset = 0;
+            return;
+        }
+
+        var backIndex = itemCount;
+        _pauseMenuIndex = Math.Clamp(_pauseMenuIndex, 0, backIndex);
+        if (_pauseMenuIndex == backIndex)
+        {
+            _pauseSaveOffset = Math.Max(0, itemCount - visibleCount);
+            return;
+        }
+
+        if (_pauseMenuIndex < _pauseSaveOffset)
+        {
+            _pauseSaveOffset = _pauseMenuIndex;
+        }
+        else if (_pauseMenuIndex >= _pauseSaveOffset + visibleCount)
+        {
+            _pauseSaveOffset = _pauseMenuIndex - visibleCount + 1;
+        }
+
+        _pauseSaveOffset = Math.Clamp(_pauseSaveOffset, 0, Math.Max(0, itemCount - visibleCount));
+    }
+
+    private void EnsurePauseLoadSelectionVisible()
+    {
+        var itemCount = _pauseLoadEntries.Count;
+        var visibleCount = GetPauseLoadVisibleCount();
+        if (itemCount <= visibleCount)
+        {
+            _pauseLoadOffset = 0;
+            return;
+        }
+
+        var backIndex = itemCount;
+        _pauseMenuIndex = Math.Clamp(_pauseMenuIndex, 0, backIndex);
+        if (_pauseMenuIndex == backIndex)
+        {
+            _pauseLoadOffset = Math.Max(0, itemCount - visibleCount);
+            return;
+        }
+
+        if (_pauseMenuIndex < _pauseLoadOffset)
+        {
+            _pauseLoadOffset = _pauseMenuIndex;
+        }
+        else if (_pauseMenuIndex >= _pauseLoadOffset + visibleCount)
+        {
+            _pauseLoadOffset = _pauseMenuIndex - visibleCount + 1;
+        }
+
+        _pauseLoadOffset = Math.Clamp(_pauseLoadOffset, 0, Math.Max(0, itemCount - visibleCount));
+    }
+
     private void OpenPauseInventoryMenu()
     {
         _pauseMenuView = PauseMenuView.Inventory;
         _pauseMenuIndex = 0;
-        _pauseMessage = "ENTER uses consumables and equips gear by slot (rings use Ring 1/Ring 2; armor needs training).";
+        _pauseInventoryOffset = 0;
+        _pauseMessage = "Left panel shows equipped slots. Select backpack gear on the right and press ENTER to equip or unequip it.";
+        EnsurePauseInventorySelectionVisible();
         ResetPauseConfirm();
     }
 
@@ -7751,7 +11896,9 @@ public sealed class Game : IDisposable
         RefreshPauseSaveEntries();
         _pauseMenuView = PauseMenuView.Save;
         _pauseMenuIndex = 0;
+        _pauseSaveOffset = 0;
         _pauseMessage = "Choose a slot to save or overwrite.";
+        EnsurePauseSaveSelectionVisible();
         ResetPauseConfirm();
     }
 
@@ -7760,9 +11907,11 @@ public sealed class Game : IDisposable
         RefreshPauseLoadEntries();
         _pauseMenuView = PauseMenuView.Load;
         _pauseMenuIndex = 0;
+        _pauseLoadOffset = 0;
         _pauseMessage = _pauseLoadEntries.Count == 0
             ? "No save files found."
             : "Select a save file to load.";
+        EnsurePauseLoadSelectionVisible();
         ResetPauseConfirm();
     }
 
@@ -7800,12 +11949,14 @@ public sealed class Game : IDisposable
     {
         _pauseSaveEntries.Clear();
         _pauseSaveEntries.AddRange(SaveStore.GetManualSlotSummaries());
+        _pauseSaveOffset = Math.Clamp(_pauseSaveOffset, 0, Math.Max(0, _pauseSaveEntries.Count - 1));
     }
 
     private void RefreshPauseLoadEntries()
     {
         _pauseLoadEntries.Clear();
         _pauseLoadEntries.AddRange(SaveStore.GetAvailableLoadEntries());
+        _pauseLoadOffset = Math.Clamp(_pauseLoadOffset, 0, Math.Max(0, _pauseLoadEntries.Count - 1));
     }
 
     private void TryManualSaveSlot(int slot)
@@ -7906,7 +12057,8 @@ public sealed class Game : IDisposable
                 LootRarity = enemyLoot?.Rarity.ToString(),
                 LootItemId = enemyLoot?.ItemId,
                 LootItemQuantity = Math.Max(0, enemyLoot?.ItemQuantity ?? 0),
-                EnemyAttackBonus = Math.Max(0, enemyLoot?.AttackBonus ?? 0)
+                EnemyAttackBonus = Math.Max(0, enemyLoot?.AttackBonus ?? 0),
+                StatusEffects = BuildEnemyStatusSnapshots(enemy)
             });
         }
 
@@ -7934,7 +12086,8 @@ public sealed class Game : IDisposable
                 LootRarity = currentEnemyLoot?.Rarity.ToString(),
                 LootItemId = currentEnemyLoot?.ItemId,
                 LootItemQuantity = Math.Max(0, currentEnemyLoot?.ItemQuantity ?? 0),
-                EnemyAttackBonus = Math.Max(0, currentEnemyLoot?.AttackBonus ?? 0)
+                EnemyAttackBonus = Math.Max(0, currentEnemyLoot?.AttackBonus ?? 0),
+                StatusEffects = BuildEnemyStatusSnapshots(_currentEnemy)
             };
         }
 
@@ -7958,7 +12111,11 @@ public sealed class Game : IDisposable
             PlayerSpriteId = _selectedPlayerSpriteId,
             Enemies = enemies,
             CurrentEnemy = resumeState == GameState.Combat ? currentEnemy : null,
-            EnemyPoisoned = Math.Max(0, _enemyPoisoned),
+            EnemyPoisoned = Math.Max(0, _currentEnemy?.StatusEffects
+                .Where(status => status.Kind == CombatStatusKind.Poison)
+                .Select(status => status.Potency)
+                .DefaultIfEmpty(0)
+                .Max() ?? 0),
             WarCryAvailable = _warCryAvailable,
             CombatLog = _combatLog.TakeLast(GetCombatLogBufferSize()).ToList(),
             RespawnDelaySeconds = respawnDelay,
@@ -8014,7 +12171,59 @@ public sealed class Game : IDisposable
                 Y = loot.Y,
                 InventoryItemId = loot.InventoryItemId,
                 InventoryItemQuantity = Math.Max(0, loot.InventoryItemQuantity)
-            }).ToList()
+            }).ToList(),
+            ActiveConcentration = string.IsNullOrWhiteSpace(_activeConcentrationSpellId)
+                ? null
+                : new ConcentrationSnapshot
+                {
+                    SpellId = _activeConcentrationSpellId,
+                    SpellLabel = _activeConcentrationLabel,
+                    RemainingRounds = Math.Max(0, _activeConcentrationRemainingRounds)
+                },
+            ActiveSummon = _activeSummon != null
+                ? new SummonSnapshot
+                {
+                    SummonTypeId = _activeSummon.Type.Id,
+                    CurrentHp = _activeSummon.CurrentHp
+                }
+                : null,
+            ActiveTransformation = _activeTransformation != null
+                ? new TransformationSnapshot
+                {
+                    SourceSpellId = _activeTransformation.SourceSpellId,
+                    FormId = _activeTransformation.Form.Id,
+                    TempHpRemaining = _activeTransformation.TempHpRemaining,
+                    FirstHitPrimed = _activeTransformation.FirstHitPrimed
+                }
+                : null,
+            CombatHazards = BuildCombatHazardSnapshots(),
+            PlayerConditions = _playerConditions.Count > 0
+                ? _playerConditions.Select(c => new PlayerConditionSaveEntry
+                    { Kind = c.Kind.ToString(), Potency = c.Potency, RemainingTurns = c.RemainingTurns }).ToList()
+                : null,
+            // Batch 1 persistent buff state
+            MageArmorActive = _mageArmorActive,
+            AidMaxHpBonus = _aidMaxHpBonus,
+            PlayerTempHp = _playerTempHp,
+            ShieldSpellActive = _shieldSpellActive,
+            ShieldSpellTurnsLeft = _shieldSpellTurnsLeft,
+            // Batch 2 persistent buff state
+            MirrorImageCharges = _mirrorImageCharges,
+            AbsorbElementsCharged = _absorbElementsCharged,
+            // Batch 3 persistent buff state
+            HellishRebukePrimed = _hellishRebukePrimed,
+            ArmorOfAgathysTempHp = _armorOfAgathysTempHp,
+            FireShieldActive = _fireShieldActive,
+            WrathOfStormPrimed = _wrathOfStormPrimed,
+            DeathWardActive = _deathWardActive,
+            HolyRebukePrimed = _holyRebukePrimed,
+            CuttingWordsPrimed = _cuttingWordsPrimed,
+            // Batch 4+5 persistent buff state
+            CounterspellPrimed = _counterspellPrimed,
+            ElementalWeaponActive = _elementalWeaponActive,
+            ElementalWeaponElement = _elementalWeaponElement,
+            RevivifyUsed = _revivifyUsed,
+            ProtEnergyElement = _protEnergyElement
         };
         return true;
     }
@@ -8035,7 +12244,12 @@ public sealed class Game : IDisposable
             return false;
         }
 
-        if (!Player.TryFromSnapshot(snapshot.Player, out var restoredPlayer, out var playerError) || restoredPlayer == null)
+        if (!Player.TryFromSnapshot(
+                snapshot.Player,
+                out var restoredPlayer,
+                out var playerError,
+                out var removedArchivedSpellCount,
+                out var refundedArchivedSpellPicks) || restoredPlayer == null)
         {
             errorMessage = $"Player restore failed: {playerError}";
             return false;
@@ -8053,6 +12267,7 @@ public sealed class Game : IDisposable
             {
                 CurrentHp = Math.Clamp(enemySnapshot.CurrentHp, 0, type.MaxHp)
             };
+            RestoreEnemyStatuses(enemy, enemySnapshot);
             restoredEnemies.Add(enemy);
 
             if (TryBuildEnemyLootKitFromSnapshot(enemySnapshot, out var restoredLoot))
@@ -8083,6 +12298,7 @@ public sealed class Game : IDisposable
                 {
                     CurrentHp = Math.Clamp(snapshot.CurrentEnemy.CurrentHp, 0, currentEnemyType.MaxHp)
                 };
+                RestoreEnemyStatuses(restoredCurrentEnemy, snapshot.CurrentEnemy);
                 restoredEnemies.Add(restoredCurrentEnemy);
                 if (TryBuildEnemyLootKitFromSnapshot(snapshot.CurrentEnemy, out var restoredLoot))
                 {
@@ -8126,7 +12342,19 @@ public sealed class Game : IDisposable
         }
 
         _currentEnemy = resumeState == GameState.Combat ? restoredCurrentEnemy : null;
-        _enemyPoisoned = Math.Max(0, snapshot.EnemyPoisoned);
+        if (_currentEnemy != null &&
+            snapshot.EnemyPoisoned > 0 &&
+            !_currentEnemy.StatusEffects.Any(status => status.Kind == CombatStatusKind.Poison))
+        {
+            _currentEnemy.StatusEffects.Add(new CombatStatusState
+            {
+                Kind = CombatStatusKind.Poison,
+                Potency = Math.Max(1, snapshot.EnemyPoisoned),
+                RemainingTurns = 1,
+                SourceSpellId = "legacy_poison",
+                SourceLabel = "Legacy Poison"
+            });
+        }
         _warCryAvailable = snapshot.WarCryAvailable;
         ResetEncounterContext();
         if (_currentEnemy != null)
@@ -8134,6 +12362,209 @@ public sealed class Game : IDisposable
             BeginEncounterFromSeed(_currentEnemy);
             BeginPlayerCombatTurn();
         }
+        if (resumeState == GameState.Combat && snapshot.ActiveConcentration != null)
+        {
+            _activeConcentrationSpellId = snapshot.ActiveConcentration.SpellId ?? string.Empty;
+            _activeConcentrationLabel = string.IsNullOrWhiteSpace(snapshot.ActiveConcentration.SpellLabel)
+                ? _activeConcentrationSpellId
+                : snapshot.ActiveConcentration.SpellLabel;
+            _activeConcentrationRemainingRounds = Math.Max(0, snapshot.ActiveConcentration.RemainingRounds);
+
+            // Reconstruct weapon rider / self-buff state from concentration
+            switch (snapshot.ActiveConcentration.SpellId)
+            {
+                case "paladin_magic_weapon":
+                    _magicWeaponActive = true;
+                    break;
+                case "ranger_flame_arrows":
+                    _flameArrowsActive = true;
+                    break;
+                case "paladin_crusaders_mantle":
+                    _crusadersMantleActive = true;
+                    break;
+                case "ranger_zephyr_strike":
+                    _zephyrStrikeActive = true;
+                    _zephyrStrikeHitPrimed = true;
+                    break;
+                case "paladin_divine_favor":
+                    _divineFavorActive = true;
+                    break;
+                case "cleric_shield_of_faith":
+                case "paladin_shield_of_faith":
+                    _shieldOfFaithActive = true;
+                    break;
+                case "cleric_bless":
+                    _blessActive = true;
+                    break;
+                case "paladin_heroism":
+                case "bard_heroism":
+                    _heroismActive = true;
+                    break;
+                case "ranger_barkskin":
+                    _barkskinActive = true;
+                    break;
+                case "mage_blur":
+                    _blurActive = true;
+                    break;
+                case "mage_haste":
+                    _hasteActive = true;
+                    break;
+                // Batch 2 concentration reconstruction
+                case "mage_expeditious_retreat":
+                    _expeditiousRetreatActive = true;
+                    break;
+                case "ranger_longstrider":
+                    _longstriderActive = true;
+                    break;
+                case "bard_hex":
+                    _hexActive = true;
+                    break;
+                case "cleric_protection_evg":
+                case "paladin_protection_evg":
+                    _protFromEvilActive = true;
+                    break;
+                case "cleric_sanctuary":
+                    _sanctuaryActive = true;
+                    break;
+                case "paladin_compelled_duel":
+                    _compelledDuelActive = true;
+                    break;
+                case "bard_enhance_ability":
+                case "cleric_enhance_ability":
+                case "mage_enhance_ability":
+                    _enhanceAbilityActive = true;
+                    break;
+                // Batch 3 concentration reconstruction
+                case "cleric_spirit_shroud":
+                    _spiritShroudActive = true;
+                    break;
+                case "ranger_thorns":
+                    _thornsActive = true;
+                    break;
+                case "ranger_stoneskin":
+                case "mage_stoneskin":
+                    _stoneskinActive = true;
+                    break;
+                case "bard_greater_invisibility":
+                    _greaterInvisibilityActive = true;
+                    break;
+                // Batch 4+5 concentration reconstruction
+                case "bard_invisibility":
+                    _invisibilityActive = true;
+                    break;
+                case "paladin_elemental_weapon":
+                    _elementalWeaponActive = true;
+                    _elementalWeaponElement = snapshot.ElementalWeaponElement;
+                    break;
+                case "mage_blink":
+                    _blinkActive = true;
+                    break;
+                case "mage_protection_from_energy":
+                    _protEnergyActive = true;
+                    _protEnergyElement = !string.IsNullOrWhiteSpace(snapshot.ProtEnergyElement)
+                        ? snapshot.ProtEnergyElement
+                        : "fire";
+                    break;
+                case "cleric_beacon_of_hope":
+                    _beaconOfHopeActive = true;
+                    break;
+                case "bard_major_image":
+                    _majorImageActive = true;
+                    break;
+                case "paladin_aura_of_courage":
+                    _auraOfCourageActive = true;
+                    break;
+            }
+        }
+
+        // Restore Batch 1 persistent buff state from snapshot
+        // Note: _runDefenseBonus is restored from snapshot.RunDefenseBonus which already includes all buff bonuses
+        _mageArmorActive = snapshot.MageArmorActive;
+        _aidMaxHpBonus = Math.Max(0, snapshot.AidMaxHpBonus);
+        _playerTempHp = Math.Max(0, snapshot.PlayerTempHp);
+        _shieldSpellActive = snapshot.ShieldSpellActive;
+        _shieldSpellTurnsLeft = Math.Max(0, snapshot.ShieldSpellTurnsLeft);
+        // Batch 2 persistent buff state
+        _mirrorImageCharges = Math.Max(0, snapshot.MirrorImageCharges);
+        _absorbElementsCharged = snapshot.AbsorbElementsCharged;
+        // Batch 3 persistent buff state
+        _hellishRebukePrimed = snapshot.HellishRebukePrimed;
+        _armorOfAgathysTempHp = Math.Max(0, snapshot.ArmorOfAgathysTempHp);
+        _fireShieldActive = snapshot.FireShieldActive;
+        _wrathOfStormPrimed = snapshot.WrathOfStormPrimed;
+        _deathWardActive = snapshot.DeathWardActive;
+        _holyRebukePrimed = snapshot.HolyRebukePrimed;
+        _cuttingWordsPrimed = snapshot.CuttingWordsPrimed;
+        // Batch 4+5 persistent buff state
+        _counterspellPrimed = snapshot.CounterspellPrimed;
+        _elementalWeaponActive = snapshot.ElementalWeaponActive;
+        _elementalWeaponElement = snapshot.ElementalWeaponElement ?? string.Empty;
+        _revivifyUsed = snapshot.RevivifyUsed;
+        // ProtEnergyElement is also loaded via concentration reconstruction (above), but
+        // reading it here too ensures it's available even if concentration state is absent.
+        if (!string.IsNullOrWhiteSpace(snapshot.ProtEnergyElement))
+            _protEnergyElement = snapshot.ProtEnergyElement;
+
+        // Restore active summon from snapshot
+        _activeSummon = null;
+        if (snapshot.ActiveSummon != null
+            && SpellData.SummonTypes.TryGetValue(snapshot.ActiveSummon.SummonTypeId, out var loadedSummonType))
+        {
+            _activeSummon = new SummonInstance
+            {
+                Type = loadedSummonType,
+                CurrentHp = loadedSummonType.MaxHp > 0
+                    ? Math.Clamp(snapshot.ActiveSummon.CurrentHp, 1, loadedSummonType.MaxHp)
+                    : 0
+            };
+            if (loadedSummonType.Behavior == SummonBehaviorKind.BuffMount)
+            {
+                _runDefenseBonus += 2;
+                _runFleeBonus += 15;
+            }
+        }
+
+        // Restore active transformation from snapshot
+        _activeTransformation = null;
+        if (snapshot.ActiveTransformation != null
+            && SpellData.Forms.TryGetValue(snapshot.ActiveTransformation.FormId, out var loadedForm))
+        {
+            _activeTransformation = new TransformationInstance
+            {
+                Form = loadedForm,
+                SourceSpellId = snapshot.ActiveTransformation.SourceSpellId,
+                TempHpRemaining = Math.Clamp(snapshot.ActiveTransformation.TempHpRemaining, 1, loadedForm.TempHp),
+                FirstHitPrimed = snapshot.ActiveTransformation.FirstHitPrimed
+            };
+
+            // Reconstruct passive bonuses
+            if (loadedForm.Special == FormSpecialKind.DefenseBonus)
+                _runDefenseBonus += loadedForm.SpecialValue;
+            if (loadedForm.Special == FormSpecialKind.FleeBonus)
+                _runFleeBonus += loadedForm.SpecialValue;
+            if (loadedForm.Special == FormSpecialKind.Evasion)
+                _runFleeBonus += loadedForm.SpecialValue;
+        }
+
+        if (resumeState == GameState.Combat)
+        {
+            RestoreCombatHazards(snapshot);
+        }
+
+        _playerConditions.Clear();
+        if (snapshot.PlayerConditions != null)
+        {
+            foreach (var entry in snapshot.PlayerConditions)
+            {
+                if (Enum.TryParse<PlayerConditionKind>(entry.Kind, ignoreCase: true, out var kind) && entry.RemainingTurns > 0)
+                {
+                    _playerConditions.Add(new PlayerConditionState
+                        { Kind = kind, Potency = Math.Max(0, entry.Potency), RemainingTurns = entry.RemainingTurns });
+                }
+            }
+        }
+
+        SyncFollowingCombatHazardsToPlayer();
         _resolvingEnemyDeath = false;
         _enemyResolveAt = -1;
         _defeatedEnemyPending = null;
@@ -8181,6 +12612,7 @@ public sealed class Game : IDisposable
         _milestoneEscapeRank = Math.Clamp(snapshot.MilestoneEscapeRank, 0, MaxEffectiveDoctrineRank);
         ResetRelicCombatTriggers();
         ResetMilestoneCombatTriggers();
+        DisableRunMetaLayerStateIfNeeded();
         _bossDefeated = snapshot.BossDefeated;
         _floorCleared = snapshot.FloorCleared;
         _settingsMasterVolume = Math.Clamp(snapshot.SettingsMasterVolume, 0, 100);
@@ -8301,6 +12733,22 @@ public sealed class Game : IDisposable
         ResetCameraTracking();
         _gameState = _floorCleared ? GameState.VictoryScreen : resumeState;
 
+        if (removedArchivedSpellCount > 0)
+        {
+            var migrationMessage = refundedArchivedSpellPicks > 0
+                ? $"Spell cleanup migrated {removedArchivedSpellCount} archived spell(s); refunded {refundedArchivedSpellPicks} spell pick(s)."
+                : $"Spell cleanup migrated {removedArchivedSpellCount} archived spell(s).";
+
+            if (_gameState == GameState.Combat)
+            {
+                _combatLog.Add(migrationMessage);
+            }
+            else if (_gameState == GameState.Playing)
+            {
+                ShowRewardMessage(migrationMessage, requireAcknowledge: false, visibleSeconds: 12);
+            }
+        }
+
         if (_player != null && !_player.IsAlive)
         {
             HandlePlayerDeath();
@@ -8315,6 +12763,7 @@ public sealed class Game : IDisposable
         _selectedCombatSkillIndex = 0;
         _selectedSpellIndex = 0;
         _selectedRewardOptionIndex = 0;
+        _combatSkillMenuOffset = 0;
         _skillMenuOffset = 0;
         _spellMenuOffset = 0;
         _characterSheetScroll = 0;
@@ -8376,10 +12825,15 @@ public sealed class Game : IDisposable
     private void ResetEncounterContext()
     {
         ClearPendingCombatSpell();
+        if (!string.IsNullOrWhiteSpace(_activeConcentrationSpellId))
+        {
+            EndActiveConcentration(string.Empty, logMessage: false);
+        }
         _encounterActive = false;
         _encounterRound = 1;
         _encounterEnemies.Clear();
         _encounterTurnOrder.Clear();
+        _activeCombatHazards.Clear();
         _encounterTurnIndex = 0;
         _encounterCurrentCombatantId = string.Empty;
         _selectedEncounterTargetIndex = -1;
@@ -8420,7 +12874,7 @@ public sealed class Game : IDisposable
             new(
                 Id: "player",
                 Kind: EncounterCombatantKind.Player,
-                InitiativeModifier: _player.Mod(StatName.Dexterity),
+                InitiativeModifier: _player.Mod(StatName.Dexterity) + _player.InitiativeBonus,
                 StableOrder: 0)
         };
 
@@ -8517,6 +12971,510 @@ public sealed class Game : IDisposable
         }
     }
 
+    private int GetPlayerSpellSaveDc(StatName spellcastingStat)
+    {
+        if (_player == null)
+        {
+            return 10;
+        }
+
+        var proficiencyBonus = Math.Clamp(2 + Math.Max(0, (_player.Level - 1) / 4), 2, 6);
+        return 8 + proficiencyBonus + _player.Mod(spellcastingStat);
+    }
+
+    private bool TryRollEnemySave(Enemy enemy, StatName saveStat, StatName spellcastingStat, out int rollTotal, out int modifier, out int dc)
+    {
+        modifier = enemy.Type.GetSaveModifier(saveStat);
+        dc = GetPlayerSpellSaveDc(spellcastingStat);
+        var roll1 = _rng.Next(1, 21);
+        // Metamagic Heightened Spell: enemy rolls twice, takes lower (disadvantage on save)
+        if (_metamagicPrimed)
+        {
+            _metamagicPrimed = false;
+            var roll2 = _rng.Next(1, 21);
+            var lower = Math.Min(roll1, roll2);
+            PushCombatLog($"Heightened Spell — enemy rolls {roll1} and {roll2}, takes lower ({lower})!");
+            rollTotal = lower + modifier;
+        }
+        else
+        {
+            rollTotal = roll1 + modifier;
+        }
+        return rollTotal >= dc;
+    }
+
+    private bool TryResolveSharedSpellInitialSave(SpellDefinition spell, SpellEffectRouteSpec route, Enemy enemy, out string message)
+    {
+        message = string.Empty;
+        if (!route.InitialSaveStat.HasValue || route.SaveDamageBehavior != SpellSaveDamageBehavior.None)
+        {
+            return false;
+        }
+
+        var saveStat = route.InitialSaveStat.Value;
+        var saved = TryRollEnemySave(enemy, saveStat, spell.ScalingStat, out var rollTotal, out _, out var dc);
+        var saveLabel = GetStatShortLabel(saveStat);
+        if (saved)
+        {
+            message = $"{enemy.Type.Name} resists {spell.Name} ({saveLabel} save {rollTotal} vs DC {dc}).";
+            return true;
+        }
+
+        message = $"{enemy.Type.Name} fails the {saveLabel} save against {spell.Name} ({rollTotal} vs DC {dc}).";
+        return false;
+    }
+
+    private bool TryResolveSpellDamageSaveOutcome(
+        SpellDefinition spell,
+        SpellEffectRouteSpec route,
+        Enemy enemy,
+        out string message,
+        out int damageNumerator,
+        out int damageDenominator,
+        out bool skipStatuses)
+    {
+        message = string.Empty;
+        damageNumerator = 1;
+        damageDenominator = 1;
+        skipStatuses = false;
+        if (!route.InitialSaveStat.HasValue || route.SaveDamageBehavior == SpellSaveDamageBehavior.None)
+        {
+            return false;
+        }
+
+        var saveStat = route.InitialSaveStat.Value;
+        var saved = TryRollEnemySave(enemy, saveStat, spell.ScalingStat, out var rollTotal, out _, out var dc);
+        var saveLabel = GetStatShortLabel(saveStat);
+        if (!saved)
+        {
+            message = $"{enemy.Type.Name} fails the {saveLabel} save against {spell.Name} ({rollTotal} vs DC {dc}).";
+            return true;
+        }
+
+        skipStatuses = true;
+        switch (route.SaveDamageBehavior)
+        {
+            case SpellSaveDamageBehavior.NegateOnSave:
+                damageNumerator = 0;
+                message = $"{enemy.Type.Name} resists {spell.Name} ({saveLabel} save {rollTotal} vs DC {dc}) and takes no damage.";
+                break;
+            case SpellSaveDamageBehavior.HalfOnSave:
+                damageDenominator = 2;
+                message = $"{enemy.Type.Name} partially resists {spell.Name} ({saveLabel} save {rollTotal} vs DC {dc}) and takes half damage.";
+                break;
+            default:
+                message = $"{enemy.Type.Name} resists {spell.Name} ({saveLabel} save {rollTotal} vs DC {dc}).";
+                break;
+        }
+
+        return true;
+    }
+
+    private static bool SpellAffectsCreatureType(SpellEffectRouteSpec route, Enemy enemy)
+    {
+        return route.AllowedCreatureTypes == CreatureTypeTag.Any ||
+            (enemy.Type.CreatureTypes & route.AllowedCreatureTypes) != 0;
+    }
+
+    private static string GetCreatureTypeLabel(CreatureTypeTag creatureTypes)
+    {
+        if (creatureTypes == CreatureTypeTag.Any)
+        {
+            return "any creature";
+        }
+
+        var labels = new List<string>();
+        if (creatureTypes.HasFlag(CreatureTypeTag.Humanoid)) labels.Add("humanoid");
+        if (creatureTypes.HasFlag(CreatureTypeTag.Beast)) labels.Add("beast");
+        if (creatureTypes.HasFlag(CreatureTypeTag.Undead)) labels.Add("undead");
+        if (creatureTypes.HasFlag(CreatureTypeTag.Giant)) labels.Add("giant");
+        if (creatureTypes.HasFlag(CreatureTypeTag.Monstrosity)) labels.Add("monstrosity");
+        if (creatureTypes.HasFlag(CreatureTypeTag.Construct)) labels.Add("construct");
+
+        return labels.Count == 0
+            ? "creature"
+            : string.Join("/", labels);
+    }
+
+    private static string GetStatShortLabel(StatName stat)
+    {
+        return stat switch
+        {
+            StatName.Strength => "STR",
+            StatName.Dexterity => "DEX",
+            StatName.Constitution => "CON",
+            StatName.Intelligence => "INT",
+            StatName.Wisdom => "WIS",
+            StatName.Charisma => "CHA",
+            _ => stat.ToString().ToUpperInvariant()
+        };
+    }
+
+    private static string BuildSaveSummary(StatName saveStat, SpellSaveDamageBehavior saveDamageBehavior)
+    {
+        return saveDamageBehavior switch
+        {
+            SpellSaveDamageBehavior.NegateOnSave => $"{GetStatShortLabel(saveStat)} save negates dmg",
+            SpellSaveDamageBehavior.HalfOnSave => $"{GetStatShortLabel(saveStat)} save halves dmg",
+            _ => $"{GetStatShortLabel(saveStat)} save"
+        };
+    }
+
+    private bool TryGetSpellCreatureTypeBlockReason(SpellDefinition spell, Enemy enemy, SpellEffectRouteSpec route, out string reason)
+    {
+        if (SpellAffectsCreatureType(route, enemy))
+        {
+            reason = string.Empty;
+            return false;
+        }
+
+        reason = $"{spell.Name} only affects {GetCreatureTypeLabel(route.AllowedCreatureTypes)} targets.";
+        return true;
+    }
+
+    private IReadOnlyList<string> ApplySpellOnHitStatuses(SpellDefinition spell, SpellEffectRouteSpec route, Enemy target)
+    {
+        var statusSpecs = ResolveSpellOnHitStatuses(spell, route);
+        if (statusSpecs.Count == 0)
+        {
+            return Array.Empty<string>();
+        }
+
+        var messages = new List<string>();
+        if (TryResolveSharedSpellInitialSave(spell, route, target, out var sharedSaveMessage))
+        {
+            if (!string.IsNullOrWhiteSpace(sharedSaveMessage))
+            {
+                messages.Add(sharedSaveMessage);
+            }
+
+            return messages;
+        }
+
+        if (!string.IsNullOrWhiteSpace(sharedSaveMessage))
+        {
+            messages.Add(sharedSaveMessage);
+        }
+
+        foreach (var statusSpec in statusSpecs)
+        {
+            TryApplyOrRefreshEnemyStatus(target, statusSpec, spell.Id, spell.Name, spell.ScalingStat, out var message);
+            if (!string.IsNullOrWhiteSpace(message))
+            {
+                messages.Add(message);
+            }
+        }
+
+        return messages;
+    }
+
+    private bool TryApplyOrRefreshEnemyStatus(
+        Enemy enemy,
+        CombatStatusApplySpec spec,
+        string sourceSpellId,
+        string sourceLabel,
+        StatName? spellcastingStat,
+        out string message)
+    {
+        message = string.Empty;
+        if (spec.InitialSaveStat.HasValue && spellcastingStat.HasValue)
+        {
+            var initialSaveStat = spec.InitialSaveStat.Value;
+            if (TryRollEnemySave(enemy, initialSaveStat, spellcastingStat.Value, out var rollTotal, out _, out var dc))
+            {
+                message = $"{enemy.Type.Name} resists {GetCombatStatusLabel(spec.Kind).ToLowerInvariant()} ({GetStatShortLabel(initialSaveStat)} save {rollTotal} vs DC {dc}).";
+                return false;
+            }
+        }
+
+        if (spec.ChancePercent < 100 && _rng.Next(100) + 1 > spec.ChancePercent)
+        {
+            message = $"{enemy.Type.Name} resists {GetCombatStatusLabel(spec.Kind).ToLowerInvariant()}.";
+            return false;
+        }
+
+        var existing = enemy.StatusEffects.FirstOrDefault(status => status.Kind == spec.Kind);
+        if (existing != null)
+        {
+            existing.Potency = Math.Max(existing.Potency, spec.Potency);
+            existing.RemainingTurns = Math.Max(existing.RemainingTurns, spec.DurationTurns);
+            existing.RepeatSaveStat ??= spec.RepeatSaveStat;
+            existing.SaveDc = Math.Max(existing.SaveDc, spec.RepeatSaveStat.HasValue && spellcastingStat.HasValue ? GetPlayerSpellSaveDc(spellcastingStat.Value) : 0);
+            existing.BreaksOnDamageTaken |= spec.BreaksOnDamageTaken;
+            message = $"{enemy.Type.Name} remains {GetCombatStatusAdjective(spec.Kind)} ({existing.RemainingTurns} turn(s)).";
+            return true;
+        }
+
+        enemy.StatusEffects.Add(new CombatStatusState
+        {
+            Kind = spec.Kind,
+            Potency = spec.Potency,
+            RemainingTurns = spec.DurationTurns,
+            SourceSpellId = sourceSpellId,
+            SourceLabel = sourceLabel,
+            RepeatSaveStat = spec.RepeatSaveStat,
+            SaveDc = spec.RepeatSaveStat.HasValue && spellcastingStat.HasValue ? GetPlayerSpellSaveDc(spellcastingStat.Value) : 0,
+            BreaksOnDamageTaken = spec.BreaksOnDamageTaken
+        });
+        message = $"{enemy.Type.Name} is {GetCombatStatusAdjective(spec.Kind)} ({spec.DurationTurns} turn(s)).";
+        return true;
+    }
+
+    private static string GetCombatStatusLabel(CombatStatusKind kind)
+    {
+        return kind switch
+        {
+            CombatStatusKind.Poison => "Poison",
+            CombatStatusKind.Burning => "Burning",
+            CombatStatusKind.Corroded => "Corroded",
+            CombatStatusKind.Chilled => "Chilled",
+            CombatStatusKind.Shocked => "Shocked",
+            CombatStatusKind.Blinded => "Blinded",
+            CombatStatusKind.Slowed => "Slowed",
+            CombatStatusKind.Feared => "Feared",
+            CombatStatusKind.Rooted => "Rooted",
+            CombatStatusKind.Restrained => "Restrained",
+            CombatStatusKind.Paralyzed => "Paralyzed",
+            CombatStatusKind.Incapacitated => "Incapacitated",
+            CombatStatusKind.Prone => "Prone",
+            CombatStatusKind.Marked => "Marked",
+            CombatStatusKind.Stunned => "Stunned",
+            CombatStatusKind.Weakened => "Weakened",
+            CombatStatusKind.Cursed => "Cursed",
+            _ => kind.ToString()
+        };
+    }
+
+    private static string GetCombatStatusAdjective(CombatStatusKind kind)
+    {
+        return kind switch
+        {
+            CombatStatusKind.Poison => "poisoned",
+            CombatStatusKind.Burning => "burning",
+            CombatStatusKind.Corroded => "corroded",
+            CombatStatusKind.Chilled => "chilled",
+            CombatStatusKind.Shocked => "shocked",
+            CombatStatusKind.Blinded => "blinded",
+            CombatStatusKind.Slowed => "slowed",
+            CombatStatusKind.Feared => "feared",
+            CombatStatusKind.Rooted => "rooted",
+            CombatStatusKind.Restrained => "restrained",
+            CombatStatusKind.Paralyzed => "paralyzed",
+            CombatStatusKind.Incapacitated => "incapacitated",
+            CombatStatusKind.Prone => "prone",
+            CombatStatusKind.Marked => "marked",
+            CombatStatusKind.Stunned => "stunned",
+            CombatStatusKind.Weakened => "weakened",
+            CombatStatusKind.Cursed => "cursed",
+            _ => kind.ToString().ToLowerInvariant()
+        };
+    }
+
+    private void TryBreakDamageSensitiveStatuses(Enemy enemy, string sourceLabel)
+    {
+        var breakableStatuses = enemy.StatusEffects
+            .Where(status => status.BreaksOnDamageTaken)
+            .ToList();
+        foreach (var status in breakableStatuses)
+        {
+            enemy.StatusEffects.Remove(status);
+            PushCombatLog($"{enemy.Type.Name} is no longer {GetCombatStatusAdjective(status.Kind)} after taking damage from {sourceLabel}.");
+        }
+    }
+
+    private void TryResolveEnemyEndOfTurnSaves(Enemy enemy)
+    {
+        foreach (var status in enemy.StatusEffects.ToList())
+        {
+            if (!status.RepeatSaveStat.HasValue || status.SaveDc <= 0)
+            {
+                continue;
+            }
+
+            var saveStat = status.RepeatSaveStat.Value;
+            var modifier = enemy.Type.GetSaveModifier(saveStat);
+            var roll = _rng.Next(1, 21) + modifier;
+            if (roll < status.SaveDc)
+            {
+                continue;
+            }
+
+            enemy.StatusEffects.Remove(status);
+            PushCombatLog($"{enemy.Type.Name} shakes off {GetCombatStatusLabel(status.Kind).ToLowerInvariant()} ({GetStatShortLabel(saveStat)} save {roll} vs DC {status.SaveDc}).");
+        }
+    }
+
+    private string GetEnemyStatusSummary(Enemy enemy)
+    {
+        if (enemy.StatusEffects.Count == 0)
+        {
+            return "No active effects";
+        }
+
+        return string.Join(", ", enemy.StatusEffects
+            .OrderBy(status => status.Kind.ToString(), StringComparer.Ordinal)
+            .Select(status => status.Potency > 1
+                ? $"{GetCombatStatusLabel(status.Kind)} {status.Potency}/{status.RemainingTurns}t"
+                : $"{GetCombatStatusLabel(status.Kind)} {status.RemainingTurns}t")
+            .Take(3));
+    }
+
+    private string BuildSpellEffectSummary(SpellDefinition spell)
+    {
+        var route = SpellData.ResolveEffectRoute(spell);
+        var familyLabel = SpellData.GetCombatFamilyLabel(route.CombatFamily);
+        if (route.IsFutureGated)
+        {
+            return string.IsNullOrWhiteSpace(route.FutureRequirement)
+                ? $"{familyLabel}: archived until later subsystem support."
+                : $"{familyLabel}: archived until {route.FutureRequirement}.";
+        }
+
+        var segments = new List<string> { familyLabel };
+        var targetShapeLabel = route.TargetShape switch
+        {
+            SpellTargetShape.SingleEnemy => "single target",
+            SpellTargetShape.Self => route.AreaRadiusTiles > 0 ? $"self aura r{route.AreaRadiusTiles}" : "self",
+            SpellTargetShape.Tile => route.HazardSpec != null ? "placed tile" : "anchored tile",
+            SpellTargetShape.Radius => $"radius {Math.Max(1, route.AreaRadiusTiles)}",
+            SpellTargetShape.Line => "line",
+            SpellTargetShape.Cone => $"cone {Math.Max(1, route.AreaRadiusTiles)}",
+            _ => "spell"
+        };
+        segments.Add(targetShapeLabel);
+        if (!string.IsNullOrWhiteSpace(route.RuntimeBehaviorNote))
+        {
+            segments.Add(route.RuntimeBehaviorNote);
+        }
+
+        if (route.AllowedCreatureTypes != CreatureTypeTag.Any)
+        {
+            segments.Add($"{GetCreatureTypeLabel(route.AllowedCreatureTypes)} only");
+        }
+
+        if (route.InitialSaveStat.HasValue)
+        {
+            segments.Add(BuildSaveSummary(route.InitialSaveStat.Value, route.SaveDamageBehavior));
+        }
+        else if (route.HazardSpec?.InitialSaveStat.HasValue == true)
+        {
+            segments.Add(BuildSaveSummary(route.HazardSpec.InitialSaveStat.Value, route.HazardSpec.SaveDamageBehavior));
+        }
+
+        if (!route.DealsDirectDamage)
+        {
+            segments.Add("no direct damage");
+        }
+        else if (route.Element != SpellElement.Unknown)
+        {
+            segments.Add($"{route.Element.ToString().ToLowerInvariant()} damage");
+        }
+
+        if (route.OnHitStatuses.Count > 0)
+        {
+            var statusSummary = string.Join(", ", route.OnHitStatuses.Select(status =>
+            {
+                var label = status.Potency > 1
+                    ? $"{GetCombatStatusLabel(status.Kind)} {status.Potency}/{status.DurationTurns}t"
+                    : $"{GetCombatStatusLabel(status.Kind)} {status.DurationTurns}t";
+                if (status.RepeatSaveStat.HasValue)
+                {
+                    label += $" repeat {GetStatShortLabel(status.RepeatSaveStat.Value)}";
+                }
+                if (status.BreaksOnDamageTaken)
+                {
+                    label += " break on dmg";
+                }
+                return status.ChancePercent < 100
+                    ? $"{label} @{status.ChancePercent}%"
+                    : label;
+            }));
+            segments.Add(statusSummary);
+        }
+
+        if (route.RequiresConcentration)
+        {
+            segments.Add("concentration");
+        }
+
+        if (route.HazardSpec != null)
+        {
+            var triggerSummary = route.HazardSpec.TriggersOnTurnStart && route.HazardSpec.TriggersOnEntry
+                ? "start+entry"
+                : route.HazardSpec.TriggersOnEntry
+                    ? "entry"
+                    : "turn start";
+            segments.Add($"hazard {route.HazardSpec.DurationRounds}r {triggerSummary}");
+        }
+
+        if (spell.SuppressCounterAttack)
+        {
+            segments.Add("retaliation break");
+        }
+
+        return string.Join(" | ", segments);
+    }
+
+    private int GetEnemyIncomingDamageBonus(Enemy enemy)
+    {
+        var bonus = CombatStatusRules.GetIncomingDamageBonus(enemy.StatusEffects);
+        // Hunter's Instinct: +2 damage to enemies with the Marked status
+        if (_player != null &&
+            _player.HuntersInstinctBonus > 0 &&
+            enemy.StatusEffects.Any(s => s.Kind == CombatStatusKind.Marked))
+        {
+            bonus += _player.HuntersInstinctBonus;
+        }
+        return bonus;
+    }
+
+    private bool ResolveEnemyStartOfTurnStatuses(Enemy enemy)
+    {
+        foreach (var status in enemy.StatusEffects.ToList())
+        {
+            var tickDamage = status.Kind switch
+            {
+                CombatStatusKind.Poison => status.Potency,
+                CombatStatusKind.Burning => status.Potency,
+                CombatStatusKind.Corroded => status.Potency,
+                _ => 0
+            };
+
+            if (tickDamage <= 0)
+            {
+                continue;
+            }
+
+            enemy.CurrentHp = Math.Max(0, enemy.CurrentHp - tickDamage);
+            if (tickDamage > 0)
+            {
+                TryBreakDamageSensitiveStatuses(enemy, GetCombatStatusLabel(status.Kind));
+            }
+            var statusLabel = GetCombatStatusLabel(status.Kind);
+            PushCombatLog($"{enemy.Type.Name} suffers {tickDamage} damage from {statusLabel.ToLowerInvariant()}.");
+            PushCombatLog($"{enemy.Type.Name} HP {enemy.CurrentHp}/{enemy.Type.MaxHp}.");
+        }
+
+        return enemy.IsAlive;
+    }
+
+    private void AdvanceEnemyStatusDurations(Enemy enemy)
+    {
+        TryResolveEnemyEndOfTurnSaves(enemy);
+        for (var i = enemy.StatusEffects.Count - 1; i >= 0; i--)
+        {
+            var status = enemy.StatusEffects[i];
+            status.RemainingTurns -= 1;
+            if (status.RemainingTurns > 0)
+            {
+                continue;
+            }
+
+            enemy.StatusEffects.RemoveAt(i);
+            PushCombatLog($"{enemy.Type.Name} is no longer {GetCombatStatusAdjective(status.Kind)}.");
+        }
+    }
+
     private void BeginPlayerCombatTurn()
     {
         if (_player == null)
@@ -8529,13 +13487,65 @@ public sealed class Game : IDisposable
             return;
         }
 
+        SyncFollowingCombatHazardsToPlayer();
+        AdvanceCombatHazardDurations();
+        AdvanceConcentrationRound();
+
+        // Aura of Vitality: tick heal at start of player turn while concentration holds
+        if (_activeConcentrationSpellId == "paladin_aura_of_vitality"
+            && _player != null && _player.CurrentHp < _player.MaxHp)
+        {
+            var pulse = _rng.Next(1, 7) + _rng.Next(1, 7); // 2d6
+            var before = _player.CurrentHp;
+            _player.CurrentHp = Math.Min(_player.MaxHp, _player.CurrentHp + pulse);
+            PushCombatLog($"Aura of Vitality: +{_player.CurrentHp - before} HP ({_player.CurrentHp}/{_player.MaxHp}).");
+        }
+
+        // Heroism: grant caster stat mod temp HP at start of each turn
+        if (_heroismActive && _player != null
+            && (_activeConcentrationSpellId == "paladin_heroism" || _activeConcentrationSpellId == "bard_heroism"))
+        {
+            var castStat = _activeConcentrationSpellId == "paladin_heroism" ? StatName.Charisma : StatName.Charisma;
+            var pulse = Math.Max(1, _player.Mod(castStat));
+            _playerTempHp += pulse;
+            PushCombatLog($"Heroism: +{pulse} temp HP ({_playerTempHp} total).");
+        }
+
+        // Shield spell: auto-expire after 1 turn
+        if (_shieldSpellActive)
+        {
+            _shieldSpellTurnsLeft--;
+            if (_shieldSpellTurnsLeft <= 0)
+            {
+                _shieldSpellActive = false;
+                _runDefenseBonus = Math.Max(0, _runDefenseBonus - 5);
+                PushCombatLog("Shield spell fades.");
+            }
+        }
+
+        // Summon auto-attack at start of player turn
+        ResolveSummonAutoAttack();
+
+        // Transformation regeneration
+        if (_activeTransformation != null && _activeTransformation.Form.Special == FormSpecialKind.Regeneration)
+        {
+            var regen = _rng.Next(1, _activeTransformation.Form.SpecialValue + 1);
+            _activeTransformation.TempHpRemaining = Math.Min(
+                _activeTransformation.Form.TempHp,
+                _activeTransformation.TempHpRemaining + regen);
+            PushCombatLog($"Regeneration: +{regen} temp HP ({_activeTransformation.TempHpRemaining}/{_activeTransformation.Form.TempHp}).");
+        }
+
+        AdvancePlayerConditions();
         TryJoinEncounterReinforcements();
         PruneEncounterTurnOrder();
         SetEncounterTurnToPlayer();
-        SyncEncounterTargetSelection(preferCurrentEnemy: true);
+        SyncEncounterTargetSelection(preferCurrentEnemy: false);
         _combatMoveModeActive = false;
         _nextMoveAt = -1;
         _combatMovePointsMax = GetPlayerCombatMoveBudget(_player);
+        if (_longstriderActive) _combatMovePointsMax += 2;
+        if (_hasteActive) _combatMovePointsMax += 2;
         _combatMovePointsRemaining = _combatMovePointsMax;
         _packEnemiesRemainingAfterCurrent = Math.Max(0, _encounterEnemies.Count(enemy =>
             enemy.IsAlive &&
@@ -8808,12 +13818,172 @@ public sealed class Game : IDisposable
             _enemyLootKits[_currentEnemy] = CreateEnemyLootKit(_currentEnemy);
         }
 
-        _enemyPoisoned = 0;
         _packEnemiesRemainingAfterCurrent = Math.Max(0, aliveEnemies.Count(enemy =>
             !ReferenceEquals(enemy, _currentEnemy)));
         SyncEncounterTargetSelection(preferCurrentEnemy: true);
         DoEnemyAttack();
         return true;
+    }
+
+    private static List<EnemyStatusSnapshot> BuildEnemyStatusSnapshots(Enemy enemy)
+    {
+        return enemy.StatusEffects
+            .Select(status => new EnemyStatusSnapshot
+            {
+                Kind = status.Kind.ToString(),
+                Potency = Math.Max(0, status.Potency),
+                RemainingTurns = Math.Max(0, status.RemainingTurns),
+                SourceSpellId = status.SourceSpellId,
+                SourceLabel = status.SourceLabel,
+                RepeatSaveStat = status.RepeatSaveStat?.ToString(),
+                SaveDc = Math.Max(0, status.SaveDc),
+                BreaksOnDamageTaken = status.BreaksOnDamageTaken
+            })
+            .Where(status => status.Potency > 0 && status.RemainingTurns > 0)
+            .ToList();
+    }
+
+    private List<CombatHazardSnapshot> BuildCombatHazardSnapshots()
+    {
+        return _activeCombatHazards
+            .Select(hazard => new CombatHazardSnapshot
+            {
+                InstanceId = hazard.InstanceId,
+                SourceSpellId = hazard.SourceSpellId,
+                SourceLabel = hazard.SourceLabel,
+                Element = hazard.Element.ToString(),
+                BaseDamage = hazard.BaseDamage,
+                Variance = hazard.Variance,
+                ArmorBypass = hazard.ArmorBypass,
+                CenterX = hazard.CenterX,
+                CenterY = hazard.CenterY,
+                RadiusTiles = hazard.RadiusTiles,
+                RemainingRounds = Math.Max(0, hazard.RemainingRounds),
+                FollowsPlayer = hazard.FollowsPlayer,
+                RequiresConcentration = hazard.RequiresConcentration,
+                TriggersOnTurnStart = hazard.TriggersOnTurnStart,
+                TriggersOnEntry = hazard.TriggersOnEntry,
+                InitialSaveStat = hazard.InitialSaveStat?.ToString(),
+                SaveDamageBehavior = hazard.SaveDamageBehavior.ToString(),
+                OnTriggerStatuses = hazard.OnTriggerStatuses
+                    .Select(status => new CombatHazardStatusSnapshot
+                    {
+                        Kind = status.Kind.ToString(),
+                        Potency = Math.Max(0, status.Potency),
+                        DurationTurns = Math.Max(0, status.DurationTurns),
+                        ChancePercent = Math.Clamp(status.ChancePercent, 1, 100),
+                        InitialSaveStat = status.InitialSaveStat?.ToString(),
+                        RepeatSaveStat = status.RepeatSaveStat?.ToString(),
+                        BreaksOnDamageTaken = status.BreaksOnDamageTaken
+                    })
+                    .Where(status => status.Potency > 0 && status.DurationTurns > 0)
+                    .ToList()
+            })
+            .Where(hazard => hazard.RemainingRounds > 0)
+            .ToList();
+    }
+
+    private static void RestoreEnemyStatuses(Enemy enemy, EnemySnapshot snapshot)
+    {
+        enemy.StatusEffects.Clear();
+        foreach (var statusSnapshot in snapshot.StatusEffects ?? new List<EnemyStatusSnapshot>())
+        {
+            if (!Enum.TryParse<CombatStatusKind>(statusSnapshot.Kind, ignoreCase: true, out var parsedKind))
+            {
+                continue;
+            }
+
+            var potency = Math.Max(0, statusSnapshot.Potency);
+            var remainingTurns = Math.Max(0, statusSnapshot.RemainingTurns);
+            if (potency <= 0 || remainingTurns <= 0)
+            {
+                continue;
+            }
+
+            enemy.StatusEffects.Add(new CombatStatusState
+            {
+                Kind = parsedKind,
+                Potency = potency,
+                RemainingTurns = remainingTurns,
+                SourceSpellId = statusSnapshot.SourceSpellId ?? string.Empty,
+                SourceLabel = statusSnapshot.SourceLabel ?? string.Empty,
+                RepeatSaveStat = Enum.TryParse<StatName>(statusSnapshot.RepeatSaveStat, ignoreCase: true, out var repeatSaveStat)
+                    ? repeatSaveStat
+                    : null,
+                SaveDc = Math.Max(0, statusSnapshot.SaveDc),
+                BreaksOnDamageTaken = statusSnapshot.BreaksOnDamageTaken
+            });
+        }
+    }
+
+    private void RestoreCombatHazards(GameSaveSnapshot snapshot)
+    {
+        _activeCombatHazards.Clear();
+        foreach (var hazardSnapshot in snapshot.CombatHazards ?? new List<CombatHazardSnapshot>())
+        {
+            if (!Enum.TryParse<SpellElement>(hazardSnapshot.Element, ignoreCase: true, out var parsedElement))
+            {
+                parsedElement = SpellElement.Unknown;
+            }
+
+            var hazard = new CombatHazardState
+            {
+                InstanceId = string.IsNullOrWhiteSpace(hazardSnapshot.InstanceId) ? $"hazard_{Guid.NewGuid():N}" : hazardSnapshot.InstanceId,
+                SourceSpellId = hazardSnapshot.SourceSpellId ?? string.Empty,
+                SourceLabel = hazardSnapshot.SourceLabel ?? string.Empty,
+                Element = parsedElement,
+                BaseDamage = Math.Max(0, hazardSnapshot.BaseDamage),
+                Variance = Math.Max(0, hazardSnapshot.Variance),
+                ArmorBypass = Math.Max(0, hazardSnapshot.ArmorBypass),
+                CenterX = hazardSnapshot.CenterX,
+                CenterY = hazardSnapshot.CenterY,
+                RadiusTiles = Math.Max(0, hazardSnapshot.RadiusTiles),
+                RemainingRounds = Math.Max(0, hazardSnapshot.RemainingRounds),
+                FollowsPlayer = hazardSnapshot.FollowsPlayer,
+                RequiresConcentration = hazardSnapshot.RequiresConcentration,
+                TriggersOnTurnStart = hazardSnapshot.TriggersOnTurnStart,
+                TriggersOnEntry = hazardSnapshot.TriggersOnEntry,
+                InitialSaveStat = Enum.TryParse<StatName>(hazardSnapshot.InitialSaveStat, ignoreCase: true, out var hazardInitialSaveStat)
+                    ? hazardInitialSaveStat
+                    : null,
+                SaveDamageBehavior = Enum.TryParse<SpellSaveDamageBehavior>(hazardSnapshot.SaveDamageBehavior, ignoreCase: true, out var hazardSaveDamageBehavior)
+                    ? hazardSaveDamageBehavior
+                    : SpellSaveDamageBehavior.None
+            };
+
+            foreach (var statusSnapshot in hazardSnapshot.OnTriggerStatuses ?? new List<CombatHazardStatusSnapshot>())
+            {
+                if (!Enum.TryParse<CombatStatusKind>(statusSnapshot.Kind, ignoreCase: true, out var parsedKind))
+                {
+                    continue;
+                }
+
+                if (statusSnapshot.Potency <= 0 || statusSnapshot.DurationTurns <= 0)
+                {
+                    continue;
+                }
+
+                hazard.OnTriggerStatuses.Add(new CombatStatusApplySpec
+                {
+                    Kind = parsedKind,
+                    Potency = statusSnapshot.Potency,
+                    DurationTurns = statusSnapshot.DurationTurns,
+                    ChancePercent = Math.Clamp(statusSnapshot.ChancePercent, 1, 100),
+                    InitialSaveStat = Enum.TryParse<StatName>(statusSnapshot.InitialSaveStat, ignoreCase: true, out var initialSaveStat)
+                        ? initialSaveStat
+                        : null,
+                    RepeatSaveStat = Enum.TryParse<StatName>(statusSnapshot.RepeatSaveStat, ignoreCase: true, out var repeatSaveStat)
+                        ? repeatSaveStat
+                        : null,
+                    BreaksOnDamageTaken = statusSnapshot.BreaksOnDamageTaken
+                });
+            }
+
+            if (hazard.RemainingRounds > 0)
+            {
+                _activeCombatHazards.Add(hazard);
+            }
+        }
     }
 
     private static bool TryBuildEnemyLootKitFromSnapshot(EnemySnapshot snapshot, out EnemyLootKit kit)
@@ -8888,6 +14058,7 @@ public sealed class Game : IDisposable
         var listX = panelX + 24;
         var listW = panelW - 48;
         var listY = panelY + 74;
+        var backY = GetPauseListBackY();
         var footerHint = "UP/DOWN select | ENTER confirm | ESC resume";
 
         if (_pauseMenuView == PauseMenuView.Root)
@@ -8903,13 +14074,43 @@ public sealed class Game : IDisposable
         else if (_pauseMenuView == PauseMenuView.Inventory)
         {
             footerHint = "UP/DOWN select | ENTER use/equip | ESC back";
+            EnsurePauseInventorySelectionVisible();
+            var equipmentPanelW = Math.Min(360, Math.Max(280, listW / 3));
+            var backpackGap = 18;
+            var equipmentX = listX;
+            var equipmentY = listY;
+            var equipmentH = backY - listY - 12;
+            var backpackX = equipmentX + equipmentPanelW + backpackGap;
+            var backpackW = Math.Max(260, listW - equipmentPanelW - backpackGap);
+            var backpackHeaderY = listY;
+            var backpackListY = backpackHeaderY + 34;
+            var visibleCount = GetPauseVisibleRowCount(backpackListY, backY, 58, 54);
+            var start = _pauseInventoryOffset;
+            var end = Math.Min(_inventoryItems.Count, start + visibleCount);
 
-            for (var i = 0; i < _inventoryItems.Count; i++)
+            DrawPanel(equipmentX, equipmentY, equipmentPanelW, equipmentH, ColPanelAlt, ColBorder);
+            DrawTextLine("Equipped", equipmentX + 12, equipmentY + 8, 24, ColSkyBlue);
+            var slotY = equipmentY + 44;
+            for (var i = 0; i < PauseEquipmentDisplaySlots.Length; i++)
             {
-                var rowY = listY + i * 58;
+                var displaySlot = PauseEquipmentDisplaySlots[i];
+                var rowY = slotY + i * 34;
+                var equippedItem = GetEquippedItemInSlot(displaySlot.Slot, displaySlot.SlotIndex);
+                var equippedLabel = equippedItem == null ? "Empty" : equippedItem.Name;
+                var valueColor = equippedItem == null ? ColGray : ColLightGray;
+                DrawMenuRow(equipmentX + 8, rowY - 3, equipmentPanelW - 16, 28, false);
+                DrawTextLine(displaySlot.Label, equipmentX + 14, rowY, 16, ColYellow);
+                DrawTextClamped(equippedLabel, equipmentX + 142, rowY + 1, 15, equipmentPanelW - 154, valueColor);
+            }
+
+            DrawPanel(backpackX, equipmentY, backpackW, equipmentH, ColPanelAlt, ColBorder);
+            DrawTextLine("Backpack", backpackX + 12, backpackHeaderY + 8, 24, ColSkyBlue);
+            for (var i = start; i < end; i++)
+            {
+                var rowY = backpackListY + (i - start) * 58;
                 var selected = i == _pauseMenuIndex;
                 var item = _inventoryItems[i];
-                DrawMenuRow(listX, rowY, listW, 54, selected);
+                DrawMenuRow(backpackX + 8, rowY, backpackW - 16, 54, selected);
                 var armorTypeLabel = item.Slot == EquipmentSlot.Armor && TryGetArmorCategory(item, out var armorCategory)
                     ? $"{GetEquipmentSlotLabel(item.Slot.Value)} ({GetArmorStateLabel(armorCategory)})"
                     : null;
@@ -8937,33 +14138,55 @@ public sealed class Game : IDisposable
                 {
                     statusLabel = $"Blocked ({GetArmorStateLabel(blockedArmorCategory)} training)";
                 }
-                Raylib.DrawText($"{item.Name} [{typeLabel}]", listX + 12, rowY + 7, 20, selected ? ColYellow : ColWhite);
-                Raylib.DrawText(statusLabel, listX + listW - 190, rowY + 8, 18, selected ? ColYellow : ColSkyBlue);
-                Raylib.DrawText(item.Description, listX + 12, rowY + 31, 14, ColLightGray);
+                var statusX = backpackX + backpackW - 186;
+                var statusMaxW = backpackX + backpackW - 24 - statusX;
+                var itemLabelMaxW = Math.Max(80, statusX - (backpackX + 20) - 10);
+                DrawTextClamped($"{item.Name} [{typeLabel}]", backpackX + 20, rowY + 7, 22, itemLabelMaxW, selected ? ColYellow : ColWhite);
+                DrawTextClamped(statusLabel, statusX, rowY + 8, 18, statusMaxW, selected ? ColYellow : ColSkyBlue);
+                DrawTextClamped(item.Description, backpackX + 20, rowY + 33, 16, backpackW - 40, ColLightGray);
+            }
+
+            if (start > 0)
+            {
+                DrawCenteredText("...more above...", backpackX + backpackW / 2, backpackListY - 16, 13, ColGray);
+            }
+            if (end < _inventoryItems.Count)
+            {
+                DrawCenteredText("...more below...", backpackX + backpackW / 2, backY - 18, 13, ColGray);
             }
 
             var backIndex = _inventoryItems.Count;
-            var backY = listY + Math.Max(1, _inventoryItems.Count) * 58 + 6;
             var backSelected = _pauseMenuIndex == backIndex;
-            DrawMenuRow(listX, backY, listW, 36, backSelected);
-            DrawCenteredText("Back", w / 2, backY + 7, 20, backSelected ? ColYellow : ColWhite);
+            DrawMenuRow(backpackX + 8, backY, backpackW - 16, 36, backSelected);
+            DrawCenteredText("Back", backpackX + backpackW / 2, backY + 7, 20, backSelected ? ColYellow : ColWhite);
         }
         else if (_pauseMenuView == PauseMenuView.Save)
         {
             footerHint = "UP/DOWN select | ENTER save | ESC back";
-
-            for (var i = 0; i < _pauseSaveEntries.Count; i++)
+            EnsurePauseSaveSelectionVisible();
+            var visibleCount = GetPauseVisibleRowCount(listY, backY, 62, 56);
+            var start = _pauseSaveOffset;
+            var end = Math.Min(_pauseSaveEntries.Count, start + visibleCount);
+            for (var i = start; i < end; i++)
             {
-                var rowY = listY + i * 62;
+                var rowY = listY + (i - start) * 62;
                 var selected = i == _pauseMenuIndex;
                 var entry = _pauseSaveEntries[i];
                 DrawMenuRow(listX, rowY, listW, 56, selected);
-                Raylib.DrawText(entry.Label, listX + 12, rowY + 8, 22, selected ? ColYellow : ColWhite);
-                Raylib.DrawText(entry.Detail, listX + 12, rowY + 33, 14, ColLightGray);
+                DrawTextClamped(entry.Label, listX + 12, rowY + 8, 22, listW - 24, selected ? ColYellow : ColWhite);
+                DrawTextClamped(entry.Detail, listX + 12, rowY + 33, 14, listW - 24, ColLightGray);
+            }
+
+            if (start > 0)
+            {
+                DrawCenteredText("...more above...", w / 2, listY - 16, 13, ColGray);
+            }
+            if (end < _pauseSaveEntries.Count)
+            {
+                DrawCenteredText("...more below...", w / 2, backY - 18, 13, ColGray);
             }
 
             var backIndex = _pauseSaveEntries.Count;
-            var backY = listY + _pauseSaveEntries.Count * 62 + 8;
             var backSelected = _pauseMenuIndex == backIndex;
             DrawMenuRow(listX, backY, listW, 36, backSelected);
             DrawCenteredText("Back", w / 2, backY + 7, 20, backSelected ? ColYellow : ColWhite);
@@ -8971,6 +14194,7 @@ public sealed class Game : IDisposable
         else if (_pauseMenuView == PauseMenuView.Load)
         {
             footerHint = "UP/DOWN select | ENTER load | ESC back";
+            EnsurePauseLoadSelectionVisible();
 
             if (_pauseLoadEntries.Count == 0)
             {
@@ -8978,19 +14202,30 @@ public sealed class Game : IDisposable
             }
             else
             {
-                for (var i = 0; i < _pauseLoadEntries.Count; i++)
+                var visibleCount = GetPauseVisibleRowCount(listY, backY, 62, 56);
+                var start = _pauseLoadOffset;
+                var end = Math.Min(_pauseLoadEntries.Count, start + visibleCount);
+                for (var i = start; i < end; i++)
                 {
-                    var rowY = listY + i * 62;
+                    var rowY = listY + (i - start) * 62;
                     var selected = i == _pauseMenuIndex;
                     var entry = _pauseLoadEntries[i];
                     DrawMenuRow(listX, rowY, listW, 56, selected);
-                    Raylib.DrawText(entry.Label, listX + 12, rowY + 8, 22, selected ? ColYellow : ColWhite);
-                    Raylib.DrawText(entry.Detail, listX + 12, rowY + 33, 14, ColLightGray);
+                    DrawTextClamped(entry.Label, listX + 12, rowY + 8, 22, listW - 24, selected ? ColYellow : ColWhite);
+                    DrawTextClamped(entry.Detail, listX + 12, rowY + 33, 14, listW - 24, ColLightGray);
+                }
+
+                if (start > 0)
+                {
+                    DrawCenteredText("...more above...", w / 2, listY - 16, 13, ColGray);
+                }
+                if (end < _pauseLoadEntries.Count)
+                {
+                    DrawCenteredText("...more below...", w / 2, backY - 18, 13, ColGray);
                 }
             }
 
             var backIndex = _pauseLoadEntries.Count;
-            var backY = listY + Math.Max(1, _pauseLoadEntries.Count) * 62 + 8;
             var backSelected = _pauseMenuIndex == backIndex;
             DrawMenuRow(listX, backY, listW, 36, backSelected);
             DrawCenteredText("Back", w / 2, backY + 7, 20, backSelected ? ColYellow : ColWhite);
@@ -9012,10 +14247,10 @@ public sealed class Game : IDisposable
                     3 => "Open",
                     _ => string.Empty
                 };
-                Raylib.DrawText(PauseSettingsOptions[i], listX + 12, rowY + 12, 20, selected ? ColYellow : ColWhite);
+                DrawTextClamped(PauseSettingsOptions[i], listX + 12, rowY + 12, 20, Math.Max(80, listW - 200), selected ? ColYellow : ColWhite);
                 if (!string.IsNullOrWhiteSpace(value))
                 {
-                    Raylib.DrawText(value, listX + listW - 170, rowY + 12, 19, selected ? ColYellow : ColSkyBlue);
+                    DrawTextClamped(value, listX + listW - 170, rowY + 12, 19, 158, selected ? ColYellow : ColSkyBlue);
                 }
             }
         }
@@ -9036,10 +14271,10 @@ public sealed class Game : IDisposable
                     3 => _activeMajorConditions.Count > 0 ? "Ready" : "No Conditions",
                     _ => string.Empty
                 };
-                Raylib.DrawText(PauseAccessibilityOptions[i], listX + 12, rowY + 12, 20, selected ? ColYellow : ColWhite);
+                DrawTextClamped(PauseAccessibilityOptions[i], listX + 12, rowY + 12, 20, Math.Max(80, listW - 290), selected ? ColYellow : ColWhite);
                 if (!string.IsNullOrWhiteSpace(value))
                 {
-                    Raylib.DrawText(value, listX + listW - 260, rowY + 12, 19, selected ? ColYellow : ColSkyBlue);
+                    DrawTextClamped(value, listX + listW - 260, rowY + 12, 19, 248, selected ? ColYellow : ColSkyBlue);
                 }
             }
         }
@@ -9052,11 +14287,11 @@ public sealed class Game : IDisposable
         if (!string.IsNullOrWhiteSpace(_pauseMessage))
         {
             DrawFooterBar(panelX + 20, panelY + panelH - 72, panelW - 40, 26);
-            DrawCenteredText(_pauseMessage, w / 2, panelY + panelH - 67, 16, ColLightGray);
+            DrawCenteredTextClamped(_pauseMessage, w / 2, panelY + panelH - 67, 16, panelW - 56, ColLightGray);
         }
 
         DrawFooterBar(panelX + 12, panelY + panelH - 36, panelW - 24, 24);
-        DrawCenteredText(footerHint, w / 2, panelY + panelH - 31, 15, ColLightGray);
+        DrawCenteredTextClamped(footerHint, w / 2, panelY + panelH - 31, 15, panelW - 40, ColLightGray);
     }
 
     private void DrawStartMenu()
@@ -9093,7 +14328,7 @@ public sealed class Game : IDisposable
         if (!string.IsNullOrWhiteSpace(_startMenuMessage))
         {
             DrawFooterBar(panelX + 12, panelY + panelH - 72, panelW - 24, 24);
-            DrawCenteredText(_startMenuMessage, centerX, panelY + panelH - 67, 14, ColLightGray);
+            DrawCenteredTextClamped(_startMenuMessage, centerX, panelY + panelH - 67, 14, panelW - 36, ColLightGray);
         }
 
         DrawFooterBar(panelX + 8, panelY + panelH - 42, panelW - 16, 30);
@@ -9140,11 +14375,11 @@ public sealed class Game : IDisposable
         Raylib.DrawRectangle(0, 0, w, h, ColInk);
 
         const int outerPad = 14;
-        const int topPad = 18;
-        const int navW = 120;
-        const int gap = 10;
-        const int summaryW = 154;
-        var panelH = h - topPad * 2;
+        const int topPad = 40;
+        const int navW = 185;
+        const int gap = 12;
+        const int summaryW = 280;
+        var panelH = h - topPad - outerPad;
         var mainW = w - (outerPad * 2 + navW + summaryW + gap * 2);
 
         var navX = outerPad;
@@ -9152,26 +14387,36 @@ public sealed class Game : IDisposable
         var summaryX = mainX + mainW + gap;
         var panelY = topPad;
 
+        // Title in header band above panels
+        DrawCenteredText("Character Creator", w / 2, (topPad - GetEffectiveUiTextSize(22)) / 2, 22, ColYellow);
+
         DrawPanel(navX, panelY, navW, panelH, ColPanelSoft, ColBorder);
         DrawPanel(mainX, panelY, mainW, panelH, ColPanel, ColBorder);
         DrawPanel(summaryX, panelY, summaryW, panelH, ColPanelSoft, ColBorder);
 
-        DrawCenteredText("Character Creator", w / 2, 10, 26, ColYellow);
-
+        // Nav tabs with accent bars
+        var tabH = UiLineH(16) + UiLineH(12) + UiScale(12);
+        var tabPad = UiScale(8);
         for (var i = 0; i < CreationSections.Length; i++)
         {
-            var y = panelY + 54 + i * 60;
+            var tabY = panelY + tabPad + i * (tabH + UiScale(4));
             var selected = i == _creationSectionIndex;
             var ready = IsCreationSectionReady(i);
-            DrawMenuRow(navX + 8, y - 8, navW - 16, 46, selected);
-            Raylib.DrawText($"{i + 1}. {CreationSections[i]}", navX + 14, y - 1, 19, selected ? ColYellow : ColLightGray);
-            Raylib.DrawText(ready ? "Ready" : "Pending", navX + 16, y + 20, 12, ready ? ColGreen : ColRed);
+            var accentColor = selected ? ColYellow : (ready ? ColGreen : new Color(160, 60, 60, 255));
+            DrawMenuRow(navX + 4, tabY, navW - 8, tabH, selected);
+            Raylib.DrawRectangle(navX + 4, tabY, 3, tabH, accentColor);
+            var indicator = ready ? "+" : "o";
+            DrawTextLine(indicator, navX + 12, tabY + UiScale(6), 12, ready ? ColGreen : new Color(200, 100, 100, 255));
+            DrawTextLine(CreationSections[i], navX + 28, tabY + UiScale(5), 16, selected ? ColYellow : ColLightGray);
+            DrawTextLine(ready ? "Ready" : "Pending", navX + 28, tabY + UiScale(5) + UiLineH(16), 12, ready ? ColGreen : new Color(200, 100, 100, 255));
         }
 
-        DrawCenteredText("1-6 jump sections", navX + navW / 2, panelY + panelH - 78, 13, ColGray);
-        DrawCenteredText("LEFT/RIGHT switch", navX + navW / 2, panelY + panelH - 60, 13, ColGray);
-        DrawCenteredText("A/D outside Name", navX + navW / 2, panelY + panelH - 42, 13, ColGray);
-        DrawCenteredText("ESC back to menu", navX + navW / 2, panelY + panelH - 24, 13, ColGray);
+        // Nav hints — bottom-anchored
+        var navHintsY = panelY + panelH - UiScale(6) - UiLineH(12) * 4;
+        DrawCenteredTextClamped("Auto-advance on ready", navX + navW / 2, navHintsY, 11, navW - 16, ColGray);
+        DrawCenteredTextClamped("A/D jump sections", navX + navW / 2, navHintsY + UiLineH(12), 11, navW - 16, ColGray);
+        DrawCenteredTextClamped("< > edit fields", navX + navW / 2, navHintsY + UiLineH(12) * 2, 11, navW - 16, ColGray);
+        DrawCenteredTextClamped("ESC back", navX + navW / 2, navHintsY + UiLineH(12) * 3, 11, navW - 16, ColGray);
 
         if (_player == null)
         {
@@ -9181,9 +14426,23 @@ public sealed class Game : IDisposable
 
         var contentX = mainX + 14;
         var contentW = mainW - 28;
-        var yCursor = panelY + 20;
-        Raylib.DrawText(CreationSections[_creationSectionIndex], contentX, yCursor, 30, ColSkyBlue);
-        yCursor += 42;
+
+        // Content header band
+        var headerH = UiScale(6) + UiLineH(20) + UiLineH(13) + UiScale(6);
+        Raylib.DrawRectangle(mainX + 1, panelY + 1, mainW - 2, headerH, new Color(25, 25, 38, 255));
+        DrawTextLine(CreationSections[_creationSectionIndex], contentX, panelY + UiScale(6), 20, ColSkyBlue);
+        var sectionSubtitles = new[]
+        {
+            "Set your character's name, gender, and race.",
+            "Choose a class. Press ENTER to confirm your choice.",
+            "Spend 25 build points. Race bonuses shown in blue. RIGHT/LEFT to adjust.",
+            "Pick spells for your class. Press ENTER to select or remove.",
+            "Choose a starting feat to define your build.",
+            "Review all picks before beginning the adventure."
+        };
+        DrawTextLine(sectionSubtitles[_creationSectionIndex], contentX, panelY + UiScale(6) + UiLineH(20), 13, ColGray);
+        Raylib.DrawLine(mainX + 1, panelY + headerH, mainX + mainW - 1, panelY + headerH, ColBorder);
+        var yCursor = panelY + headerH + UiScale(10);
 
         switch (_creationSectionIndex)
         {
@@ -9192,100 +14451,158 @@ public sealed class Game : IDisposable
                 var nameSelected = _selectedCreationIdentityIndex == 0;
                 var genderSelected = _selectedCreationIdentityIndex == 1;
                 var raceSelected = _selectedCreationIdentityIndex == 2;
-                var appearanceSelected = _selectedCreationIdentityIndex == 3;
-                var conditionSelected = _selectedCreationIdentityIndex == 4;
-                var selectedCondition = CreationConditionOptions[_selectedCreationConditionIndex];
+                var rowH = UiLineH(12) + UiLineH(20) + UiScale(12);
+                var rowStep = rowH + UiScale(6);
 
-                DrawMenuRow(contentX, yCursor, contentW, 44, nameSelected);
-                var nameValue = string.IsNullOrWhiteSpace(_pendingName) ? "(empty)" : _pendingName;
+                // Name
+                DrawMenuRow(contentX, yCursor, contentW, rowH, nameSelected);
+                Raylib.DrawRectangle(contentX, yCursor, 3, rowH, nameSelected ? ColYellow : ColGray);
+                DrawTextLine("NAME", contentX + 10, yCursor + UiScale(6), 12, ColGray);
+                var nameValue = string.IsNullOrWhiteSpace(_pendingName) ? string.Empty : _pendingName;
                 var nameSuffix = nameSelected && Raylib.GetTime() % 1 < 0.5 ? "_" : string.Empty;
-                Raylib.DrawText($"Name: {nameValue}{nameSuffix}", contentX + 12, yCursor + 12, 20, ColWhite);
-                yCursor += 56;
+                DrawTextClamped($"{nameValue}{nameSuffix}", contentX + 10, yCursor + UiScale(6) + UiLineH(12), 20, contentW - 20, nameSelected ? ColWhite : ColLightGray);
+                yCursor += rowStep;
 
-                DrawMenuRow(contentX, yCursor, contentW, 44, genderSelected);
-                Raylib.DrawText($"Gender: {Genders[_selectedGenderIndex]}", contentX + 12, yCursor + 12, 20, ColWhite);
-                yCursor += 62;
+                // Gender
+                DrawMenuRow(contentX, yCursor, contentW, rowH, genderSelected);
+                Raylib.DrawRectangle(contentX, yCursor, 3, rowH, genderSelected ? ColYellow : ColGray);
+                DrawTextLine("GENDER", contentX + 10, yCursor + UiScale(6), 12, ColGray);
+                DrawTextLine(Genders[_selectedGenderIndex].ToString(), contentX + 10, yCursor + UiScale(6) + UiLineH(12), 20, genderSelected ? ColWhite : ColLightGray);
+                if (genderSelected)
+                {
+                    const string arrowStr = "< >";
+                    var arrowW = Raylib.MeasureText(arrowStr, GetEffectiveUiTextSize(16));
+                    DrawTextLine(arrowStr, contentX + contentW - arrowW - 10, yCursor + UiScale(6) + UiLineH(12), 16, ColYellow);
+                }
+                yCursor += rowStep;
 
-                DrawMenuRow(contentX, yCursor, contentW, 44, raceSelected);
-                Raylib.DrawText($"Race: {Races[_selectedRaceIndex]}", contentX + 12, yCursor + 12, 20, ColWhite);
-                yCursor += 62;
+                // Race
+                DrawMenuRow(contentX, yCursor, contentW, rowH, raceSelected);
+                Raylib.DrawRectangle(contentX, yCursor, 3, rowH, raceSelected ? ColYellow : ColGray);
+                DrawTextLine("RACE", contentX + 10, yCursor + UiScale(6), 12, ColGray);
+                DrawTextLine(Races[_selectedRaceIndex].ToString(), contentX + 10, yCursor + UiScale(6) + UiLineH(12), 20, raceSelected ? ColWhite : ColLightGray);
+                if (raceSelected)
+                {
+                    const string arrowStr = "< >";
+                    var arrowW = Raylib.MeasureText(arrowStr, GetEffectiveUiTextSize(16));
+                    DrawTextLine(arrowStr, contentX + contentW - arrowW - 10, yCursor + UiScale(6) + UiLineH(12), 16, ColYellow);
+                }
+                yCursor += rowStep;
 
-                DrawMenuRow(contentX, yCursor, contentW, 44, appearanceSelected);
-                Raylib.DrawText($"Appearance: {GetSelectedAppearanceLabel()}", contentX + 12, yCursor + 12, 20, ColWhite);
-                yCursor += 62;
-
-                DrawMenuRow(contentX, yCursor, contentW, 44, conditionSelected);
-                Raylib.DrawText($"Origin Condition: {selectedCondition.Label}", contentX + 12, yCursor + 12, 20, ColWhite);
-                yCursor += 52;
-                DrawWrappedText(selectedCondition.Description, contentX + 10, yCursor, contentW - 20, 14, ColLightGray);
-                yCursor += 46;
-
-                DrawWrappedText(
-                    $"UP/DOWN switch fields. Type in Name. LEFT/RIGHT adjusts Gender/Race/Appearance/Condition. {RaceDescriptions[Races[_selectedRaceIndex]]}",
-                    contentX,
-                    yCursor,
-                    contentW,
-                    16,
-                    ColLightGray);
+                var appearanceLabel = ResolveDefaultSpriteForRaceAndGender(Races[_selectedRaceIndex], Genders[_selectedGenderIndex]);
+                DrawWrappedText($"Portrait locked to Race + Gender in this build ({appearanceLabel}). {RaceDescriptions[Races[_selectedRaceIndex]]}", contentX + 4, yCursor, contentW - 8, 14, ColGray);
                 break;
             }
             case 1:
             {
-                DrawWrappedText("Changing class resets stats/spells and revalidates your selected starting feat.", contentX, yCursor, contentW, 16, ColGray);
-                yCursor += 30;
+                var noteH = DrawWrappedText("Changing class resets stats, spells, and feat legality. Highlighted class is not locked until you press ENTER.", contentX, yCursor, contentW, 15, ColGray);
+                yCursor += noteH + UiScale(8);
+                var rowH = UiLineH(20) + UiScale(8);
                 for (var i = 0; i < CharacterClasses.All.Count; i++)
                 {
                     var selected = i == _selectedClassIndex;
-                    var rowY = yCursor + i * 34;
-                    DrawMenuRow(contentX, rowY, contentW, 30, selected);
-                    Raylib.DrawText(CharacterClasses.All[i].Name, contentX + 10, rowY + 6, 20, selected ? ColYellow : ColLightGray);
+                    var rowY = yCursor + i * (rowH + 4);
+                    DrawMenuRow(contentX, rowY, contentW, rowH, selected);
+                    DrawTextLine(CharacterClasses.All[i].Name, contentX + 10, rowY + UiScale(4), 20, selected ? ColYellow : ColLightGray);
                 }
-
-                var classInfoY = yCursor + CharacterClasses.All.Count * 34 + 10;
+                var classInfoY = yCursor + CharacterClasses.All.Count * (rowH + 4) + UiScale(10);
                 var chosenClass = CharacterClasses.All[_selectedClassIndex];
-                Raylib.DrawText(chosenClass.Name, contentX, classInfoY, 24, ColYellow);
-                DrawWrappedText(chosenClass.Description, contentX, classInfoY + 30, contentW, 16, ColLightGray);
+                DrawTextLine(chosenClass.Name, contentX, classInfoY, 22, ColYellow);
+                var descH = DrawWrappedText(chosenClass.Description, contentX, classInfoY + UiLineH(22) + 4, contentW, 16, ColLightGray);
+                DrawTextClamped(
+                    $"Status: {(IsCreationClassReady() ? "Confirmed" : "Pending — press ENTER to confirm")}",
+                    contentX, classInfoY + UiLineH(22) + 4 + descH + 4, 16, contentW,
+                    IsCreationClassReady() ? ColGreen : ColYellow);
                 break;
             }
             case 2:
             {
-                DrawWrappedText($"Points remaining: {_creationPointsRemaining}/6", contentX, yCursor, contentW, 20, ColWhite);
-                yCursor += 32;
-                var menuCount = StatOrder.Length + 2;
-                for (var i = 0; i < menuCount; i++)
+                var pointsColor = _creationPointsRemaining > 0 ? ColYellow : ColGreen;
+                DrawTextLine($"Points remaining: {_creationPointsRemaining} / 25", contentX, yCursor, 18, pointsColor);
+                yCursor += UiLineH(18) + UiScale(8);
+
+                Player.RaceBonuses.TryGetValue(Races[_selectedRaceIndex], out var currentRaceBonuses);
+
+                var statRowH = UiLineH(20) + UiScale(8);
+                var statRowStep = statRowH + UiScale(4);
+                for (var i = 0; i < StatOrder.Length; i++)
                 {
                     var selected = i == _creationSelectionIndex;
-                    var rowY = yCursor + i * 34;
-                    DrawMenuRow(contentX, rowY, contentW, 30, selected);
-                    if (i < StatOrder.Length)
+                    var rowY = yCursor + i * statRowStep;
+                    DrawMenuRow(contentX, rowY, contentW, statRowH, selected);
+                    var stat = StatOrder[i];
+                    var allocated = _creationAllocatedStats[i];
+                    var bought = 10 + allocated;
+                    var val = _player.Stats.Get(stat);
+                    var mod = _player.Mod(stat);
+                    var modStr = mod >= 0 ? $"+{mod}" : $"{mod}";
+
+                    // Stat name + inline race badge if this stat gets a bonus
+                    var raceBonus = currentRaceBonuses != null && currentRaceBonuses.TryGetValue(stat, out var rb) ? rb : 0;
+                    DrawTextLine(stat.ToString(), contentX + 10, rowY + UiScale(4), 18, selected ? ColYellow : ColLightGray);
+                    if (raceBonus != 0)
                     {
-                        var stat = StatOrder[i];
-                        var allocated = _creationAllocatedStats[i];
-                        Raylib.DrawText(
-                            $"{stat,-12}: {_player.Stats.Get(stat),2}   (+{allocated})",
-                            contentX + 10,
-                            rowY + 6,
-                            20,
-                            selected ? ColYellow : ColLightGray);
+                        var raceBadge = $"+{raceBonus} race";
+                        var nameW = Raylib.MeasureText(stat.ToString(), GetEffectiveUiTextSize(18));
+                        DrawTextLine(raceBadge, contentX + 10 + nameW + UiScale(6), rowY + UiScale(4), 12, ColSkyBlue);
                     }
-                    else if (i == StatOrder.Length)
+
+                    DrawTextLine($"<  {val} ({modStr})  >", contentX + contentW / 2 - UiScale(30), rowY + UiScale(4), 18, selected ? ColWhite : ColLightGray);
+
+                    // Cost-to-raise badge on right
+                    string costInfo;
+                    Color costColor;
+                    if (bought >= 20)
                     {
-                        Raylib.DrawText("Undo Last Stat Point", contentX + 10, rowY + 6, 20, selected ? ColYellow : ColLightGray);
+                        costInfo = "MAX";
+                        costColor = ColGray;
+                    }
+                    else if (bought <= 7)
+                    {
+                        costInfo = "MIN";
+                        costColor = ColGray;
                     }
                     else
                     {
-                        Raylib.DrawText("Reset Stat Allocation", contentX + 10, rowY + 6, 20, selected ? ColYellow : ColLightGray);
+                        var nextCost = PointBuyCostToRaise(bought);
+                        costInfo = $"+{nextCost}pt";
+                        costColor = nextCost <= _creationPointsRemaining ? ColGreen : ColRed;
                     }
+                    var costInfoW = Raylib.MeasureText(costInfo, GetEffectiveUiTextSize(13));
+                    DrawTextLine(costInfo, contentX + contentW - costInfoW - UiScale(10), rowY + UiScale(4), 13, costColor);
                 }
 
-                DrawWrappedText("Tip: finish all points to unlock a green Review check. Use Undo for quick correction.", contentX, yCursor + menuCount * 34 + 8, contentW, 14, ColGray);
+                var actionY = yCursor + StatOrder.Length * statRowStep + UiScale(6);
+                Raylib.DrawLine(contentX, actionY, contentX + contentW, actionY, ColBorder);
+                actionY += UiScale(8);
+                var btnW = (contentW - UiScale(12)) / 2;
+                var undoSel = _creationSelectionIndex == StatOrder.Length;
+                var resetSel = _creationSelectionIndex == StatOrder.Length + 1;
+                var btnH = UiLineH(16) + UiScale(8);
+                DrawMenuRow(contentX, actionY, btnW, btnH, undoSel);
+                DrawCenteredText("Undo", contentX + btnW / 2, actionY + UiScale(4), 15, undoSel ? ColYellow : ColLightGray);
+                DrawMenuRow(contentX + btnW + UiScale(12), actionY, btnW, btnH, resetSel);
+                DrawCenteredText("Reset All", contentX + btnW + UiScale(12) + btnW / 2, actionY + UiScale(4), 15, resetSel ? ColYellow : ColLightGray);
+                DrawWrappedText("RIGHT adds · LEFT removes · spend all 25 pts to unlock Review", contentX, actionY + btnH + UiScale(8), contentW, 13, ColGray);
                 break;
             }
             case 3:
             {
                 var spellPickLeft = _player.SpellPickPoints;
-                Raylib.DrawText($"Spell picks remaining: {spellPickLeft}", contentX, yCursor, 20, ColSkyBlue);
-                yCursor += 28;
+                DrawTextLine($"Spell picks remaining: {spellPickLeft}", contentX, yCursor, 18, spellPickLeft > 0 ? ColSkyBlue : ColGreen);
+                yCursor += UiLineH(18) + UiScale(6);
+
+                var autoCantrips = _player
+                    .GetKnownSpells()
+                    .Where(spell => spell.IsCantrip)
+                    .OrderBy(spell => spell.Name, StringComparer.Ordinal)
+                    .ToList();
+                if (autoCantrips.Count > 0)
+                {
+                    var autoLabel = $"Auto cantrips: {string.Join(", ", autoCantrips.Select(spell => spell.Name))}";
+                    var autoHeight = DrawWrappedText(autoLabel, contentX, yCursor, contentW, 13, ColGray);
+                    yCursor += autoHeight + UiScale(6);
+                }
 
                 var undoRowIndex = GetCreationSpellUndoRowIndex();
                 var resetRowIndex = GetCreationSpellResetRowIndex();
@@ -9302,76 +14619,70 @@ public sealed class Game : IDisposable
 
                     if (i == undoRowIndex)
                     {
-                        Raylib.DrawText("Undo Last Spell Pick", contentX + 10, rowY + 16, 20, selected ? ColYellow : ColLightGray);
-                        Raylib.DrawText("Reverts the most recent spell selection", contentX + 10, rowY + 36, 13, ColGray);
+                        DrawTextLine("Undo Last Spell Pick", contentX + 10, rowY + 16, 18, selected ? ColYellow : ColLightGray);
+                        DrawTextClamped("Reverts the most recent spell selection", contentX + 10, rowY + 34, 13, contentW - 20, ColGray);
                         continue;
                     }
 
                     if (i == resetRowIndex)
                     {
-                        Raylib.DrawText("Reset Spell Picks", contentX + 10, rowY + 16, 20, selected ? ColYellow : ColLightGray);
-                        Raylib.DrawText("Undo selected spells and rebuild picks", contentX + 10, rowY + 36, 13, ColGray);
+                        DrawTextLine("Reset Spell Picks", contentX + 10, rowY + 16, 18, selected ? ColYellow : ColLightGray);
+                        DrawTextClamped("Undo all selected spells and rebuild picks", contentX + 10, rowY + 34, 13, contentW - 20, ColGray);
                         continue;
                     }
 
                     var spell = _creationLearnableSpells[i];
                     var tier = spell.IsCantrip ? "Cantrip" : $"L{spell.SpellLevel}";
+                    var familyLabel = SpellData.GetCombatFamilyLabel(spell);
                     var canLearn = _player.CanLearnSpell(spell, out var blockReason);
                     var spellAlreadyKnown = _player.KnowsSpell(spell.Id);
                     var manuallySelected = _creationChosenSpellIds.Contains(spell.Id);
                     var status = canLearn
-                        ? "Learnable now (ENTER to add)"
+                        ? "Learnable (ENTER to add)"
                         : spellAlreadyKnown
-                            ? manuallySelected ? "Selected (ENTER to remove)" : "Known by default (free cantrip)"
+                            ? manuallySelected ? "Selected (ENTER to remove)" : "Known by default"
                             : $"Locked: {blockReason}";
                     var nameColor = canLearn ? (selected ? ColYellow : ColWhite) : spellAlreadyKnown ? ColSkyBlue : ColGray;
                     var statusColor = canLearn ? ColGreen : spellAlreadyKnown ? (manuallySelected ? ColYellow : ColSkyBlue) : ColRed;
 
-                    Raylib.DrawText($"{spell.Name} ({tier})", contentX + 10, rowY + 6, 18, nameColor);
-                    Raylib.DrawText(spell.Description, contentX + 10, rowY + 24, 14, ColLightGray);
-                    Raylib.DrawText(status, contentX + 10, rowY + 40, 13, statusColor);
+                    DrawTextClamped($"{spell.Name} ({tier}) [{familyLabel}]", contentX + 10, rowY + 6, 17, contentW - 20, nameColor);
+                    DrawTextClamped(BuildSpellEffectSummary(spell), contentX + 10, rowY + 24, 13, contentW - 20, ColLightGray);
+                    DrawTextClamped(status, contentX + 10, rowY + 40, 13, contentW - 20, statusColor);
                 }
 
                 if (menuCount == 0)
                 {
                     if (!_player.IsCasterClass)
-                    {
-                        DrawWrappedText("This class has no spell progression in the current 1-6 scope.", contentX, yCursor + 6, contentW, 18, ColGray);
-                    }
+                        DrawWrappedText("This class has no spell progression in the current 1-6 scope.", contentX, yCursor + 6, contentW, 16, ColGray);
                     else if (_player.SpellPickPoints <= 0)
-                    {
-                        DrawWrappedText("No spell picks available at this level. Level up to unlock additional picks.", contentX, yCursor + 6, contentW, 18, ColGray);
-                    }
+                        DrawWrappedText("No spell picks available at this level. Level up to unlock additional picks.", contentX, yCursor + 6, contentW, 16, ColGray);
                     else
                     {
-                        DrawWrappedText("No learnable spells right now. Review locked spells below.", contentX, yCursor + 6, contentW, 18, ColGray);
-                        var previewY = yCursor + 42;
+                        DrawWrappedText("No learnable spells right now. Review locked spells below.", contentX, yCursor + 6, contentW, 16, ColGray);
+                        var previewY = yCursor + 40;
                         foreach (var spell in _player.GetClassSpells().Take(3))
                         {
                             var canLearn = _player.CanLearnSpell(spell, out var reason);
                             var tier = spell.IsCantrip ? "Cantrip" : $"L{spell.SpellLevel}";
-                            Raylib.DrawText(
-                                $"{spell.Name} ({tier}): {(canLearn ? "Learnable" : reason)}",
-                                contentX + 4,
-                                previewY,
-                                15,
-                                canLearn ? ColGreen : ColGray);
-                            previewY += 22;
+                            var familyLabel = SpellData.GetCombatFamilyLabel(spell);
+                            DrawTextLine(
+                                $"{spell.Name} ({tier}, {familyLabel}): {(canLearn ? "Learnable" : reason)}",
+                                contentX + 4, previewY, 14, canLearn ? ColGreen : ColGray);
+                            previewY += UiLineH(14) + 2;
                         }
                     }
                 }
                 else
                 {
-                    DrawWrappedText("Tip: inspect locked spells for exact reasons. Use Undo/Reset if you want to revise picks.", contentX, yCursor + SpellLearnVisibleCount * 60 + 8, contentW, 14, ColGray);
+                    DrawWrappedText("Families describe current combat behavior. Locked rows show exact reasons.", contentX, yCursor + SpellLearnVisibleCount * 60 + 8, contentW, 13, ColGray);
                 }
-
                 break;
             }
             case 4:
             {
                 var featPicksLeft = _player.FeatPoints;
-                Raylib.DrawText($"Starting feat picks remaining: {featPicksLeft}", contentX, yCursor, 20, ColYellow);
-                yCursor += 28;
+                DrawTextLine($"Feat picks remaining: {featPicksLeft}", contentX, yCursor, 18, featPicksLeft > 0 ? ColYellow : ColGreen);
+                yCursor += UiLineH(18) + UiScale(6);
 
                 var menuCount = _creationFeatChoices.Count;
                 EnsureCreationFeatSelectionVisible(menuCount);
@@ -9382,156 +14693,216 @@ public sealed class Game : IDisposable
                     var selected = i == _selectedCreationFeatIndex;
                     var rowY = yCursor + (i - start) * 70;
                     DrawMenuRow(contentX, rowY, contentW, 66, selected);
-
                     var feat = _creationFeatChoices[i];
                     var canLearn = _player.CanLearnFeat(feat, out var blockReason);
                     var chosen = _player.HasFeat(feat.Id) && _creationChosenFeatIds.Contains(feat.Id);
                     var status = canLearn
-                        ? "Learnable now (ENTER to select)"
+                        ? $"Learnable (ENTER to select). Req: {GetFeatPrerequisiteLabel(feat)}"
                         : chosen
                             ? "Selected (ENTER to remove)"
                             : $"Locked: {blockReason}";
                     var nameColor = canLearn ? (selected ? ColYellow : ColWhite) : chosen ? ColSkyBlue : ColGray;
                     var statusColor = canLearn ? ColGreen : chosen ? ColSkyBlue : ColRed;
-
-                    Raylib.DrawText(feat.Name, contentX + 10, rowY + 6, 19, nameColor);
-                    Raylib.DrawText($"Lv {feat.MinLevel}+ | {feat.Effect}", contentX + 10, rowY + 28, 14, ColLightGray);
-                    Raylib.DrawText(status, contentX + 10, rowY + 46, 13, statusColor);
+                    DrawTextClamped(feat.Name, contentX + 10, rowY + 6, 18, contentW - 20, nameColor);
+                    DrawTextClamped($"Effect: {GetFeatEffectLabel(feat)}", contentX + 10, rowY + 28, 13, contentW - 20, ColLightGray);
+                    DrawTextClamped(status, contentX + 10, rowY + 46, 13, contentW - 20, statusColor);
                 }
 
                 if (menuCount == 0)
                 {
-                    DrawWrappedText("No feats available in the current catalog.", contentX, yCursor + 8, contentW, 18, ColGray);
+                    DrawWrappedText("No feats available in the current catalog.", contentX, yCursor + 8, contentW, 16, ColGray);
                 }
                 else
                 {
-                    DrawWrappedText("Tip: choose one starting feat. Locked rows show exact prerequisite blockers.", contentX, yCursor + CreationFeatVisibleCount * 70 + 8, contentW, 14, ColGray);
+                    var highlightedFeat = _creationFeatChoices[Math.Clamp(_selectedCreationFeatIndex, 0, _creationFeatChoices.Count - 1)];
+                    DrawWrappedText(
+                        $"Selected: {highlightedFeat.Description}  Requirements: {GetFeatPrerequisiteLabel(highlightedFeat)}",
+                        contentX, yCursor + CreationFeatVisibleCount * 70 + 8, contentW, 13, ColGray);
                 }
                 break;
             }
             case 5:
             {
                 var readyName = IsCreationNameReady();
+                var readyClass = IsCreationClassReady();
                 var readyStats = IsCreationStatsReady();
                 var readySpells = IsCreationSpellsReady();
                 var readyFeats = IsCreationFeatsReady();
-                var rows = new[]
+                (string label, bool ok)[] reviewRows =
                 {
-                    $"Name set: {(readyName ? "Yes" : "No")}",
-                    $"Stats allocated: {(readyStats ? "Yes" : "No")}",
-                    $"Spell picks complete: {(readySpells ? "Yes" : "No")}",
-                    $"Starting feat selected: {(readyFeats ? "Yes" : "No")}"
+                    ("Name set", readyName),
+                    ("Class confirmed", readyClass),
+                    ("Stats allocated", readyStats),
+                    ("Spell picks complete", readySpells),
+                    ("Starting feat selected", readyFeats)
                 };
 
-                for (var i = 0; i < rows.Length; i++)
+                for (var i = 0; i < reviewRows.Length; i++)
                 {
-                    var ok = i switch
-                    {
-                        0 => readyName,
-                        1 => readyStats,
-                        2 => readySpells,
-                        _ => readyFeats
-                    };
+                    var (label, ok) = reviewRows[i];
                     DrawPanel(contentX, yCursor + i * 44, contentW, 38, ColPanelAlt, ColBorder);
-                    Raylib.DrawText(rows[i], contentX + 12, yCursor + 10 + i * 44, 20, ok ? ColGreen : ColRed);
+                    DrawTextLine($"{(ok ? "+" : "o")} {label}: {(ok ? "Done" : "Pending")}", contentX + 12, yCursor + 10 + i * 44, 18, ok ? ColGreen : ColRed);
                 }
 
-                var startY = yCursor + rows.Length * 44 + 24;
+                var startY = yCursor + reviewRows.Length * 44 + 24;
                 var readyToStart = readyName && readyStats && readySpells && readyFeats;
                 DrawMenuRow(contentX, startY, contentW, 54, readyToStart);
-                DrawCenteredText("Start Adventure (ENTER)", contentX + contentW / 2, startY + 15, 24, readyToStart ? ColYellow : ColGray);
-                DrawWrappedText("You can still move back to Identity/Class/Stats/Spells/Feats before confirming.", contentX, startY + 64, contentW, 15, ColLightGray);
+                DrawCenteredText("Start Adventure (ENTER)", contentX + contentW / 2, startY + 15, 22, readyToStart ? ColYellow : ColGray);
+                DrawWrappedText("You can still go back to any section before confirming.", contentX, startY + 60, contentW, 14, ColLightGray);
                 break;
             }
         }
 
-        // Summary panel
-        var sy = panelY + 16;
-        Raylib.DrawText("Summary", summaryX + 10, sy, 24, ColYellow);
-        sy += 34;
-        Raylib.DrawText(IsCreationReady() ? "Build Ready" : "Build Incomplete", summaryX + 10, sy, 14, IsCreationReady() ? ColGreen : ColRed);
-        sy += 22;
-        var shownName = string.IsNullOrWhiteSpace(_pendingName) ? "(unset)" : _pendingName.Trim();
-        Raylib.DrawText($"Name: {shownName}", summaryX + 10, sy, 16, ColWhite);
-        sy += 22;
-        Raylib.DrawText($"Gender: {Genders[_selectedGenderIndex]}", summaryX + 10, sy, 16, ColWhite);
-        sy += 22;
-        Raylib.DrawText($"Race: {Races[_selectedRaceIndex]}", summaryX + 10, sy, 16, ColWhite);
-        sy += 22;
-        Raylib.DrawText($"Appearance: {GetSelectedAppearanceLabel()}", summaryX + 10, sy, 16, ColWhite);
-        sy += 22;
-        Raylib.DrawText($"Class: {CharacterClasses.All[_selectedClassIndex].Name}", summaryX + 10, sy, 16, ColWhite);
-        sy += 22;
-        Raylib.DrawText($"Origin Cond: {CreationConditionOptions[_selectedCreationConditionIndex].Label}", summaryX + 10, sy, 15, ColLightGray);
-        sy += 24;
+        // Summary panel — character card + structured sections
+        var summaryTextW = summaryW - 24;
+        var sy = panelY + 10;
+        Raylib.BeginScissorMode(summaryX + 1, panelY + 1, summaryW - 2, panelH - 2);
 
-        Raylib.DrawText($"HP: {_player.CurrentHp}/{_player.MaxHp}", summaryX + 10, sy, 16, ColGreen);
-        sy += 20;
-        Raylib.DrawText($"MP: {_player.CurrentMana}/{_player.MaxMana}", summaryX + 10, sy, 16, ColSkyBlue);
-        sy += 22;
-        Raylib.DrawText($"Stat points left: {_creationPointsRemaining}", summaryX + 10, sy, 16, ColWhite);
-        sy += 20;
-        Raylib.DrawText($"Spell picks left: {_player.SpellPickPoints}", summaryX + 10, sy, 16, ColWhite);
-        sy += 20;
-        Raylib.DrawText($"Feat picks left: {_player.FeatPoints}", summaryX + 10, sy, 16, ColWhite);
-        sy += 26;
+        // Character card
+        var buildReady = IsCreationReady();
+        var cardBg = buildReady ? new Color(18, 45, 18, 255) : new Color(38, 28, 16, 255);
+        var cardH = UiScale(6) + UiLineH(20) + UiLineH(14) + UiLineH(13) + UiScale(6);
+        Raylib.DrawRectangle(summaryX + 4, sy, summaryW - 8, cardH, cardBg);
+        Raylib.DrawRectangleLines(summaryX + 4, sy, summaryW - 8, cardH, buildReady ? ColGreen : new Color(180, 140, 60, 255));
 
-        Raylib.DrawText("Checks", summaryX + 10, sy, 18, ColLightGray);
-        sy += 22;
-        Raylib.DrawText(IsCreationNameReady() ? "Name: OK" : "Name: Missing", summaryX + 10, sy, 14, IsCreationNameReady() ? ColGreen : ColRed);
-        sy += 18;
-        Raylib.DrawText(IsCreationStatsReady() ? "Stats: OK" : "Stats: Incomplete", summaryX + 10, sy, 14, IsCreationStatsReady() ? ColGreen : ColRed);
-        sy += 18;
-        Raylib.DrawText(IsCreationSpellsReady() ? "Spells: OK" : "Spells: Incomplete", summaryX + 10, sy, 14, IsCreationSpellsReady() ? ColGreen : ColRed);
-        sy += 18;
-        Raylib.DrawText(IsCreationFeatsReady() ? "Feats: OK" : "Feats: Incomplete", summaryX + 10, sy, 14, IsCreationFeatsReady() ? ColGreen : ColRed);
-        sy += 24;
+        var shownName = string.IsNullOrWhiteSpace(_pendingName) ? "Unnamed" : _pendingName.Trim();
+        DrawTextClamped(shownName, summaryX + 10, sy + UiScale(6), 20, summaryTextW - 8, ColWhite);
 
-        Raylib.DrawText("Core Stats", summaryX + 10, sy, 18, ColLightGray);
-        sy += 24;
-        foreach (var stat in StatOrder)
+        var cardClassName = CharacterClasses.All[_selectedClassIndex].Name;
+        var classConfirmed = IsCreationClassReady();
+        DrawTextClamped(
+            classConfirmed ? cardClassName : $"{cardClassName} (pending)",
+            summaryX + 10, sy + UiScale(6) + UiLineH(20), 14, summaryTextW - 8,
+            classConfirmed ? ColYellow : ColGray);
+        DrawTextClamped(
+            $"{Races[_selectedRaceIndex]} · {Genders[_selectedGenderIndex]}",
+            summaryX + 10, sy + UiScale(6) + UiLineH(20) + UiLineH(14), 13, summaryTextW - 8, ColLightGray);
+
+        var badgeText = buildReady ? "READY" : "PENDING";
+        var summaryBadgeW = Raylib.MeasureText(badgeText, 11);
+        DrawTextLine(badgeText, summaryX + summaryW - summaryBadgeW - 12, sy + UiScale(6), 11, buildReady ? ColGreen : new Color(200, 160, 60, 255));
+
+        sy += cardH + UiScale(6);
+
+        // HP + picks
+        Raylib.DrawLine(summaryX + 8, sy, summaryX + summaryW - 8, sy, ColBorder);
+        sy += UiScale(6);
+        DrawTextClamped($"HP {_player.CurrentHp}/{_player.MaxHp}", summaryX + 10, sy, 14, summaryTextW, ColLightGray);
+        sy += UiLineH(14) + UiScale(2);
+        DrawTextClamped($"Pts {_creationPointsRemaining}/25  Spells +{_player.SpellPickPoints}  Feats +{_player.FeatPoints}", summaryX + 10, sy, 13, summaryTextW, ColLightGray);
+        sy += UiLineH(13) + UiScale(8);
+
+        // Combat Stats
+        Raylib.DrawLine(summaryX + 8, sy, summaryX + summaryW - 8, sy, ColBorder);
+        sy += UiScale(6);
+        DrawTextLine("Combat Stats", summaryX + 10, sy, 14, ColSkyBlue);
+        sy += UiLineH(14) + UiScale(2);
+        var csArmorState = GetCurrentArmorCategory();
+        var csArmorLabel = GetArmorStateLabel(csArmorState);
+        var csAC = GetPlayerArmorClass();
+        var csWeapon = GetEquippedWeaponDef();
+        var csAtkStat = csWeapon.IsFinesse
+            ? (_player.Mod(StatName.Strength) >= _player.Mod(StatName.Dexterity) ? StatName.Strength : StatName.Dexterity)
+            : (csWeapon.IsRanged ? StatName.Dexterity : csWeapon.AttackStat);
+        DrawTextClamped($"AC: {csAC}  ({csArmorLabel})", summaryX + 10, sy, 13, summaryTextW, ColLightGray);
+        sy += UiLineH(13) + 2;
+        DrawTextClamped($"Weapon: {csWeapon.Name} ({csWeapon.DiceCount}d{csWeapon.DamageDice}+{GetStatShortLabel(csAtkStat)})", summaryX + 10, sy, 13, summaryTextW, ColLightGray);
+        sy += UiLineH(13) + 2;
+        var csSaves = string.Join(", ", _player.CharacterClass.SaveProficiencies.Select(s => GetStatShortLabel(s)));
+        DrawTextClamped($"Saves: {csSaves}", summaryX + 10, sy, 13, summaryTextW, ColLightGray);
+        sy += UiLineH(13) + 2;
+        if (_player.IsCasterClass)
         {
-            Raylib.DrawText($"{stat}: {_player.Stats.Get(stat)}", summaryX + 10, sy, 15, ColLightGray);
-            sy += 18;
+            var csDC = 8 + GetProficiencyBonus() + Math.Max(0, _player.Mod(_player.CastingStat));
+            DrawTextClamped($"Spell DC: {csDC}", summaryX + 10, sy, 13, summaryTextW, ColLightGray);
+            sy += UiLineH(13) + 2;
         }
+        sy += UiScale(8);
 
-        sy += 8;
-        Raylib.DrawText("Picked Feat", summaryX + 10, sy, 18, ColYellow);
-        sy += 22;
+        // Checks — 2-column grid
+        Raylib.DrawLine(summaryX + 8, sy, summaryX + summaryW - 8, sy, ColBorder);
+        sy += UiScale(6);
+        DrawTextLine("Checks", summaryX + 10, sy, 14, ColLightGray);
+        sy += UiLineH(14) + UiScale(2);
+
+        var col1X = summaryX + 10;
+        var col2X = summaryX + summaryW / 2 + 4;
+        (string name, bool ok)[] checks =
+        {
+            ("Name", IsCreationNameReady()),
+            ("Class", IsCreationClassReady()),
+            ("Stats", IsCreationStatsReady()),
+            ("Spells", IsCreationSpellsReady()),
+            ("Feat", IsCreationFeatsReady()),
+        };
+        for (var i = 0; i < checks.Length; i += 2)
+        {
+            var (l1, ok1) = checks[i];
+            DrawTextClamped($"{(ok1 ? "+" : "o")} {l1}", col1X, sy, 13, summaryW / 2 - 14, ok1 ? ColGreen : ColRed);
+            if (i + 1 < checks.Length)
+            {
+                var (l2, ok2) = checks[i + 1];
+                DrawTextClamped($"{(ok2 ? "+" : "o")} {l2}", col2X, sy, 13, summaryW / 2 - 14, ok2 ? ColGreen : ColRed);
+            }
+            sy += UiLineH(13) + 2;
+        }
+        sy += UiScale(6);
+
+        // Core stats — 2-column with modifiers
+        Raylib.DrawLine(summaryX + 8, sy, summaryX + summaryW - 8, sy, ColBorder);
+        sy += UiScale(6);
+        DrawTextLine("Stats", summaryX + 10, sy, 14, ColLightGray);
+        sy += UiLineH(14) + UiScale(2);
+
+        (StatName s1, StatName s2)[] statPairs =
+        {
+            (StatName.Strength, StatName.Dexterity),
+            (StatName.Constitution, StatName.Intelligence),
+            (StatName.Wisdom, StatName.Charisma),
+        };
+        foreach (var (s1, s2) in statPairs)
+        {
+            var v1 = _player.Stats.Get(s1); var m1 = _player.Mod(s1);
+            var v2 = _player.Stats.Get(s2); var m2 = _player.Mod(s2);
+            DrawTextClamped($"{s1.ToString()[..3].ToUpper()} {v1} ({(m1 >= 0 ? "+" : "")}{m1})", col1X, sy, 13, summaryW / 2 - 14, ColLightGray);
+            DrawTextClamped($"{s2.ToString()[..3].ToUpper()} {v2} ({(m2 >= 0 ? "+" : "")}{m2})", col2X, sy, 13, summaryW / 2 - 14, ColLightGray);
+            sy += UiLineH(13) + 2;
+        }
+        sy += UiScale(6);
+
+        // Feat
+        Raylib.DrawLine(summaryX + 8, sy, summaryX + summaryW - 8, sy, ColBorder);
+        sy += UiScale(6);
+        DrawTextLine("Feat", summaryX + 10, sy, 14, ColYellow);
+        sy += UiLineH(14) + UiScale(2);
         var selectedFeat = _player.Feats.FirstOrDefault();
-        if (selectedFeat == null)
-        {
-            Raylib.DrawText("None", summaryX + 10, sy, 15, ColGray);
-            sy += 18;
-        }
-        else
-        {
-            Raylib.DrawText(selectedFeat.Name, summaryX + 10, sy, 14, ColLightGray);
-            sy += 16;
-        }
+        DrawTextClamped(selectedFeat?.Name ?? "None", summaryX + 10, sy, 13, summaryTextW, selectedFeat != null ? ColLightGray : ColGray);
+        sy += UiLineH(13) + UiScale(8);
 
-        sy += 8;
-        Raylib.DrawText("Picked Spells", summaryX + 10, sy, 18, ColSkyBlue);
-        sy += 22;
+        // Spells
+        Raylib.DrawLine(summaryX + 8, sy, summaryX + summaryW - 8, sy, ColBorder);
+        sy += UiScale(6);
+        DrawTextLine("Spells", summaryX + 10, sy, 14, ColSkyBlue);
+        sy += UiLineH(14) + UiScale(2);
         var knownSpells = _player.GetKnownSpells();
         if (knownSpells.Count == 0)
         {
-            Raylib.DrawText("None", summaryX + 10, sy, 15, ColGray);
-            sy += 18;
+            DrawTextClamped("None", summaryX + 10, sy, 13, summaryTextW, ColGray);
         }
         else
         {
-            foreach (var spell in knownSpells.Take(6))
+            foreach (var spell in knownSpells.Take(5))
             {
                 var tier = spell.IsCantrip ? "C" : $"L{spell.SpellLevel}";
-                Raylib.DrawText($"{tier} {spell.Name}", summaryX + 10, sy, 14, ColLightGray);
-                sy += 16;
+                DrawTextClamped($"{tier} {spell.Name}", summaryX + 10, sy, 13, summaryTextW, ColLightGray);
+                sy += UiLineH(13) + 2;
             }
         }
+        Raylib.EndScissorMode();
 
-        DrawFooterBar(outerPad, h - 34, w - outerPad * 2, 22);
+        DrawFooterBar(outerPad, h - 38, w - outerPad * 2, 26);
         var footer = string.IsNullOrWhiteSpace(_creationMessage) ? GetCreationSectionHint() : _creationMessage;
-        Raylib.DrawText(footer, outerPad + 8, h - 30, 14, ColLightGray);
+        DrawTextClamped(footer, outerPad + 8, h - 33, 16, w - outerPad * 2 - 16, ColLightGray);
     }
 
     private void DrawNameInput()
@@ -9642,10 +15013,11 @@ public sealed class Game : IDisposable
         int screenW,
         int screenH,
         int worldW,
-        int worldH)
+        int worldH,
+        int hudH = 0)
     {
         var halfViewW = screenW / 2f;
-        var halfViewH = screenH / 2f;
+        var halfViewH = (screenH - hudH) / 2f;
         var clampedX = Math.Clamp(target.X, halfViewW, Math.Max(halfViewW, worldW - halfViewW));
         var clampedY = Math.Clamp(target.Y, halfViewH, Math.Max(halfViewH, worldH - halfViewH));
         return new System.Numerics.Vector2(clampedX, clampedY);
@@ -9657,10 +15029,15 @@ public sealed class Game : IDisposable
         var screenH = Raylib.GetScreenHeight();
         var worldW = GetWorldPixelWidth();
         var worldH = GetWorldPixelHeight();
+        var hudH = UiLayout.HudHeight;
+
+        // Center the viewport on the playable area below the HUD so world
+        // geometry is never obscured by the top panel.
+        var viewCenterY = hudH + (screenH - hudH) / 2f;
 
         var camera = new Camera2D
         {
-            Offset = new System.Numerics.Vector2(screenW / 2f, screenH / 2f),
+            Offset = new System.Numerics.Vector2(screenW / 2f, viewCenterY),
             Rotation = 0f,
             Zoom = 1f
         };
@@ -9676,7 +15053,16 @@ public sealed class Game : IDisposable
         var playerWorldY = _player.Y * GameMap.TileSize + GameMap.TileSize / 2f;
 
         var desiredTarget = new System.Numerics.Vector2(playerWorldX, playerWorldY);
-        desiredTarget = ClampCameraTargetToWorld(desiredTarget, screenW, screenH, worldW, worldH);
+        if (IsCombatState(_gameState) && _currentEnemy != null && _currentEnemy.IsAlive)
+        {
+            var enemyWorldX = _currentEnemy.X * GameMap.TileSize + GameMap.TileSize / 2f;
+            var enemyWorldY = _currentEnemy.Y * GameMap.TileSize + GameMap.TileSize / 2f;
+            desiredTarget = new System.Numerics.Vector2(
+                (playerWorldX + enemyWorldX) * 0.5f,
+                (playerWorldY + enemyWorldY) * 0.5f);
+        }
+
+        desiredTarget = ClampCameraTargetToWorld(desiredTarget, screenW, screenH, worldW, worldH, hudH);
 
         if (!_cameraTargetInitialized)
         {
@@ -9707,13 +15093,13 @@ public sealed class Game : IDisposable
                 shiftedTarget.Y = playerWorldY + deadZoneHalfY;
             }
 
-            shiftedTarget = ClampCameraTargetToWorld(shiftedTarget, screenW, screenH, worldW, worldH);
+            shiftedTarget = ClampCameraTargetToWorld(shiftedTarget, screenW, screenH, worldW, worldH, hudH);
             var dt = Math.Clamp(Raylib.GetFrameTime(), 0f, 0.25f);
             _cameraTarget.X = Damp(_cameraTarget.X, shiftedTarget.X, GameTuning.CameraSmoothness, dt);
             _cameraTarget.Y = Damp(_cameraTarget.Y, shiftedTarget.Y, GameTuning.CameraSmoothness, dt);
         }
 
-        _cameraTarget = ClampCameraTargetToWorld(_cameraTarget, screenW, screenH, worldW, worldH);
+        _cameraTarget = ClampCameraTargetToWorld(_cameraTarget, screenW, screenH, worldW, worldH, hudH);
         camera.Target = _cameraTarget;
         return camera;
     }
@@ -9775,6 +15161,112 @@ public sealed class Game : IDisposable
             var py = tile.Y * GameMap.TileSize;
             Raylib.DrawRectangle(px + 4, py + 4, GameMap.TileSize - 8, GameMap.TileSize - 8, new Color(82, 154, 204, 64));
             Raylib.DrawRectangleLines(px + 3, py + 3, GameMap.TileSize - 6, GameMap.TileSize - 6, new Color(126, 198, 255, 170));
+        }
+    }
+
+    private void DrawCombatHazards()
+    {
+        if (!IsCombatState(_gameState) || _activeCombatHazards.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var hazard in _activeCombatHazards)
+        {
+            var fill = hazard.Element switch
+            {
+                SpellElement.Fire => new Color(220, 96, 52, 72),
+                SpellElement.Radiant => new Color(232, 220, 118, 72),
+                SpellElement.Arcane => new Color(118, 148, 232, 72),
+                SpellElement.Nature => new Color(112, 182, 102, 72),
+                SpellElement.Force => new Color(178, 178, 228, 72),
+                _ => new Color(128, 142, 176, 72)
+            };
+            var border = hazard.Element switch
+            {
+                SpellElement.Fire => new Color(255, 156, 98, 180),
+                SpellElement.Radiant => new Color(255, 240, 150, 180),
+                SpellElement.Arcane => new Color(164, 196, 255, 180),
+                SpellElement.Nature => new Color(154, 224, 138, 180),
+                SpellElement.Force => new Color(210, 210, 255, 180),
+                _ => new Color(182, 194, 220, 180)
+            };
+
+            foreach (var tile in EncounterSpellAreaRules.EnumerateRadiusTiles(hazard.CenterX, hazard.CenterY, hazard.RadiusTiles))
+            {
+                if (IsWallOrSealed(tile.X, tile.Y))
+                {
+                    continue;
+                }
+
+                var px = tile.X * GameMap.TileSize;
+                var py = tile.Y * GameMap.TileSize;
+                Raylib.DrawRectangle(px + 5, py + 5, GameMap.TileSize - 10, GameMap.TileSize - 10, fill);
+                Raylib.DrawRectangleLines(px + 4, py + 4, GameMap.TileSize - 8, GameMap.TileSize - 8, border);
+            }
+        }
+    }
+
+    private void DrawPendingCombatSpellPreview()
+    {
+        if (_gameState != GameState.CombatSpellTargeting || _player == null)
+        {
+            return;
+        }
+
+        if (!TryGetPendingCombatSpell(out var pendingSpell))
+        {
+            return;
+        }
+
+        var route = SpellData.ResolveEffectRoute(pendingSpell);
+        var (anchorX, anchorY) = ResolveSpellAnchorTile(pendingSpell);
+        var aimValidation = ValidateCombatSpellAim(pendingSpell);
+        var tiles = EncounterSpellAreaRules.EnumerateAffectedTiles(
+            pendingSpell,
+            route,
+            _player.X,
+            _player.Y,
+            anchorX,
+            anchorY);
+        var fill = aimValidation.IsLegal
+            ? new Color(112, 186, 238, 76)
+            : new Color(224, 92, 92, 76);
+        var border = aimValidation.IsLegal
+            ? new Color(176, 228, 255, 188)
+            : new Color(255, 154, 154, 188);
+        foreach (var tile in tiles)
+        {
+            if (tile.X < 0 || tile.X >= GameMap.MapWidthTiles || tile.Y < 0 || tile.Y >= GameMap.MapHeightTiles)
+            {
+                continue;
+            }
+
+            if (IsWallOrSealed(tile.X, tile.Y))
+            {
+                continue;
+            }
+
+            var px = tile.X * GameMap.TileSize;
+            var py = tile.Y * GameMap.TileSize;
+            Raylib.DrawRectangle(px + 6, py + 6, GameMap.TileSize - 12, GameMap.TileSize - 12, fill);
+            Raylib.DrawRectangleLines(px + 5, py + 5, GameMap.TileSize - 10, GameMap.TileSize - 10, border);
+        }
+
+        if (!UsesSelfCenteredSpellTargeting(pendingSpell))
+        {
+            var anchorPx = anchorX * GameMap.TileSize;
+            var anchorPy = anchorY * GameMap.TileSize;
+            var anchorBorder = aimValidation.IsLegal ? ColYellow : ColAccentRose;
+            Raylib.DrawRectangleLines(anchorPx + 2, anchorPy + 2, GameMap.TileSize - 4, GameMap.TileSize - 4, anchorBorder);
+            Raylib.DrawRectangleLines(anchorPx + 1, anchorPy + 1, GameMap.TileSize - 2, GameMap.TileSize - 2, anchorBorder);
+        }
+
+        foreach (var enemy in ResolveSpellAffectedEnemies(pendingSpell))
+        {
+            var px = enemy.X * GameMap.TileSize;
+            var py = enemy.Y * GameMap.TileSize;
+            Raylib.DrawRectangleLines(px + 1, py + 1, GameMap.TileSize - 2, GameMap.TileSize - 2, ColSkyBlue);
         }
     }
 
@@ -10059,6 +15551,8 @@ public sealed class Game : IDisposable
         DrawRewardNodes();
         DrawGroundLoot();
         DrawCombatReachableTiles();
+        DrawCombatHazards();
+        DrawPendingCombatSpellPreview();
 
         foreach (var enemy in _enemies.Where(e => e.IsAlive))
         {
@@ -10190,60 +15684,62 @@ public sealed class Game : IDisposable
         var levelText = $"Lv.{_player.Level} XP: {_player.Xp}/{_player.XpToNextLevel}";
         var enemiesText = $"Enemies: {_enemies.Count(e => e.IsAlive)}  Zone: {GetFloorZoneLabel(_currentFloorZone)}";
         var controlsText = "[C] Sheet  [WASD/Arrows] Move  [Hold E] Loot  [F1] Debug  [F11] Fullscreen";
-        var hasBuildIdentity =
+        var hasBuildIdentity = EnableRunMetaLayer && (
             _runArchetype != RunArchetype.None ||
             _runRelic != RunRelic.None ||
             GetEffectiveExecutionRank() > 0 ||
             GetEffectiveArcRank() > 0 ||
-            GetEffectiveEscapeRank() > 0;
+            GetEffectiveEscapeRank() > 0);
         var topRightText = hasBuildIdentity ? $"Build: {GetRunIdentityLabel()}" : controlsText;
-        var topRightFont = hasBuildIdentity ? 14 : 15;
+        var topRightFont = hasBuildIdentity ? 15 : 16;
         var topRightColor = hasBuildIdentity ? ColSkyBlue : ColLightGray;
-        var topRightX = hudW - pad - Raylib.MeasureText(topRightText, topRightFont);
+        var topRightX = hudW - pad - MeasureUiText(topRightText, topRightFont);
         var levelX = pad;
-        var enemiesMinX = levelX + Raylib.MeasureText(levelText, 17) + 24;
-        var enemiesX = Math.Max(enemiesMinX, topRightX - Raylib.MeasureText(enemiesText, 15) - 18);
+        var enemiesMinX = levelX + MeasureUiText(levelText, 18) + 26;
+        var enemiesX = Math.Max(enemiesMinX, topRightX - MeasureUiText(enemiesText, 16) - 18);
 
-        Raylib.DrawText(levelText, levelX, 9, 17, ColWhite);
-        Raylib.DrawText(enemiesText, enemiesX, 9, 15, ColLightGray);
+        var hudR1 = UiScale(7);
+        var hudR2 = hudR1 + UiLineH(18);
+        var hudR3 = hudR2 + UiLineH(20);
+        var hudR4 = hudR3 + UiLineH(16);
+
+        DrawTextLine(levelText, levelX, hudR1, 18, ColWhite);
+        DrawTextLine(enemiesText, enemiesX, hudR1, 16, ColLightGray);
         if (topRightX > enemiesX + 120)
         {
-            Raylib.DrawText(topRightText, topRightX, 9, topRightFont, topRightColor);
+            DrawTextLine(topRightText, topRightX, hudR1, topRightFont, topRightColor);
         }
 
         var hpText = $"HP {_player.CurrentHp}/{_player.MaxHp}";
-        var mpText = $"MP {_player.CurrentMana}/{_player.MaxMana}";
         var packText = $"Pack: {GetInventoryQuantityTotal()} items";
         var hpX = 8;
-        var mpX = hpX + Raylib.MeasureText(hpText, 18) + 22;
-        var packX = mpX + Raylib.MeasureText(mpText, 18) + 22;
-        Raylib.DrawText(hpText, hpX, 30, 18, ColGreen);
-        Raylib.DrawText(mpText, mpX, 30, 18, ColSkyBlue);
-        Raylib.DrawText(packText, packX, 30, 15, ColYellow);
+        var packX = hpX + MeasureUiText(hpText, 20) + 24;
+        DrawTextLine(hpText, hpX, hudR2, 20, ColGreen);
+        DrawTextLine(packText, packX, hudR2, 16, ColYellow);
         var objectiveText = GetPhase3ObjectiveLabel();
-        DrawWrappedText(objectiveText, hpX, 48, Math.Max(220, hudW - hpX - pad), 13, ColLightGray);
+        DrawTextClamped(objectiveText, hpX, hudR3, 16, Math.Max(220, hudW - hpX - pad), ColLightGray);
         var conditionsHudText = _settingsOptionalConditionsEnabled
             ? $"Conditions: {GetActiveMajorConditionSummary()} | Cure: Settings -> Accessibility -> Purge ({GetConditionPurgeCostLabel()})"
             : "Conditions: disabled in settings.";
-        DrawWrappedText(
+        DrawTextClamped(
             conditionsHudText,
             hpX,
-            63,
+            hudR4,
+            14,
             Math.Max(220, hudW - hpX - pad),
-            12,
             _settingsOptionalConditionsEnabled && _activeMajorConditions.Count > 0 ? ColAccentRose : ColGray);
 
         if (_player.IsCasterClass)
         {
             var slotsText = $"Slots L1 {_player.GetSpellSlots(1)}/{_player.GetSpellSlotsMax(1)}  L2 {_player.GetSpellSlots(2)}/{_player.GetSpellSlotsMax(2)}  L3 {_player.GetSpellSlots(3)}/{_player.GetSpellSlotsMax(3)}";
-            var slotsX = hudW - pad - Raylib.MeasureText(slotsText, 16);
+            var slotsX = hudW - pad - MeasureUiText(slotsText, 16);
             if (slotsX > packX + 120)
             {
-                Raylib.DrawText(slotsText, slotsX, 30, 16, ColLightGray);
+                DrawTextLine(slotsText, slotsX, hudR2, 16, ColLightGray);
             }
             else
             {
-                DrawWrappedText(slotsText, packX, 30, Math.Max(140, hudW - packX - pad), 14, ColLightGray);
+                DrawTextClamped(slotsText, packX, hudR2, 14, Math.Max(140, hudW - packX - pad), ColLightGray);
             }
         }
 
@@ -10287,8 +15783,8 @@ public sealed class Game : IDisposable
                 $"DEBUG  CamSmooth {GameTuning.CameraSmoothness:0.0}  DeadZone {GameTuning.CameraDeadZoneHalfWidthTiles:0.0}x{GameTuning.CameraDeadZoneHalfHeightTiles:0.0}  " +
                 $"Vision {GameTuning.EnemyVisionRangeTiles:0.0}  FOV {GameTuning.EnemyFovDegrees:0}  Leash {GameTuning.EnemyLeashDistanceTiles}";
             var debugY = UiLayout.HudHeight + 8;
-            DrawPanel(8, debugY, Math.Min(hudW - 16, 980), 26, new Color(9, 12, 20, 210), ColBorder);
-            Raylib.DrawText(debugText, 14, debugY + 6, 14, ColLightGray);
+            DrawPanel(8, debugY, Math.Min(hudW - 16, 980), 30, new Color(9, 12, 20, 210), ColBorder);
+            DrawTextClamped(debugText, 14, debugY + 7, 14, Math.Min(hudW - 28, 964), ColLightGray);
         }
     }
 
@@ -10298,23 +15794,11 @@ public sealed class Game : IDisposable
 
         var w = Raylib.GetScreenWidth();
         var h = Raylib.GetScreenHeight();
-        Raylib.DrawRectangle(0, 0, w, h, new Color(0, 0, 0, 210));
-        DrawPanel(
-            UiLayout.CombatOverlayInset,
-            UiLayout.CombatOverlayInset,
-            w - UiLayout.CombatOverlayInset * 2,
-            h - UiLayout.CombatOverlayInset * 2,
-            ColPanel,
-            ColAccentRose);
-
-        // Enemy header
-        DrawPanel(
-            UiLayout.CombatHeaderInsetX,
-            UiLayout.CombatHeaderY,
-            w - UiLayout.CombatHeaderInsetX * 2,
-            UiLayout.CombatHeaderHeight,
-            ColPanelAlt,
-            ColBorder);
+        var submenuOpen =
+            _gameState == GameState.CombatSkillMenu ||
+            _gameState == GameState.CombatSpellMenu ||
+            _gameState == GameState.CombatSpellTargeting ||
+            _gameState == GameState.CombatItemMenu;
         var aliveTargets = GetAliveEncounterEnemies();
         var activeTargetIndex = aliveTargets.FindIndex(enemy => ReferenceEquals(enemy, _currentEnemy));
         if (activeTargetIndex < 0)
@@ -10328,75 +15812,222 @@ public sealed class Game : IDisposable
             ? "Melee ready"
             : $"Melee blocked ({meleeValidation.BuildBlockedReason()})";
         var losLabel = meleeValidation.HasLineOfSight ? "LOS clear" : "LOS blocked";
-        DrawCenteredText($"{_currentEnemy.Type.Name}  Target {activeTargetIndex + 1}/{Math.Max(1, aliveTargets.Count)}", w / 2, 74, 28, ColAccentRose);
-        DrawCenteredText($"Enemy HP {enemyHp}/{_currentEnemy.Type.MaxHp}  Dist {meleeValidation.DistanceTiles}/{meleeValidation.MaxRangeTiles}", w / 2, 100, 17, ColWhite);
-        DrawCenteredText($"{attackReadinessLabel}  |  {losLabel}", w / 2, 118, 14, meleeValidation.IsLegal ? ColGreen : ColYellow);
+        var statusLabel = GetEnemyStatusSummary(_currentEnemy);
+        var concentrationLabel = GetActiveConcentrationSummary();
+        var targetRoster = string.Join("  |  ", aliveTargets.Take(3).Select(enemy =>
+        {
+            var marker = ReferenceEquals(enemy, _currentEnemy) ? ">" : " ";
+            var distance = _player == null ? 0 : EncounterTargetingRules.GetTileDistance(_player.X, _player.Y, enemy.X, enemy.Y);
+            return $"{marker}{enemy.Type.Name} {enemy.CurrentHp}hp {distance}t";
+        }));
+        if (aliveTargets.Count > 3)
+        {
+            targetRoster = $"{targetRoster}  |  +{aliveTargets.Count - 3} more";
+        }
 
-        // Shared content area for log + action panels.
-        var contentX = UiLayout.CombatHeaderInsetX;
-        var contentY = UiLayout.CombatContentY;
-        var contentW = w - UiLayout.CombatHeaderInsetX * 2;
-        var contentH = UiLayout.CombatContentHeight;
-        var colGap = UiLayout.CombatColumnsGap;
-        var actionW = Math.Clamp(contentW / 4, 132, 220);
-        var logW = contentW - actionW - colGap;
+        var contentX = 12;
+        var contentH = submenuOpen
+            ? Math.Clamp(h / 5, 148, 164)
+            : Math.Clamp(h / 5, 156, 172);
+        var summaryPad = UiScale(6);
+        var hasActiveBuffs = _divineFavorActive || _magicWeaponActive || _flameArrowsActive || _crusadersMantleActive || _zephyrStrikeActive
+            || _shieldOfFaithActive || _blessActive || _heroismActive || _mageArmorActive || _shieldSpellActive
+            || _barkskinActive || _blurActive || _hasteActive || _aidMaxHpBonus > 0
+            || _mirrorImageCharges > 0 || _absorbElementsCharged || _expeditiousRetreatActive || _longstriderActive
+            || _hexActive || _protFromEvilActive || _sanctuaryActive || _compelledDuelActive || _enhanceAbilityActive
+            || _hellishRebukePrimed || _armorOfAgathysTempHp > 0 || _fireShieldActive || _wrathOfStormPrimed
+            || _spiritShroudActive || _deathWardActive || _holyRebukePrimed || _thornsActive
+            || _stoneskinActive || _cuttingWordsPrimed || _greaterInvisibilityActive
+            || _counterspellPrimed || _invisibilityActive || _elementalWeaponActive || _revivifyUsed
+            || _blinkActive || _protEnergyActive || _beaconOfHopeActive || _majorImageActive || _auraOfCourageActive;
+        var hasActiveSummon = _activeSummon != null;
+        var hasActiveTransformation = _activeTransformation != null;
+        var summaryH = summaryPad + UiLineH(14) + UiLineH(13) + (hasActiveBuffs ? UiLineH(13) : 0) + (hasActiveSummon ? UiLineH(13) : 0) + (hasActiveTransformation ? UiLineH(13) : 0) + summaryPad;
+        var bottomReserve = Math.Max(78, summaryH + 42);
+        var contentY = h - contentH - bottomReserve;
+        var colGap = 12;
+        var actionW = Math.Clamp(w / 4, 250, 300);
+        var contentW = w - contentX * 2;
+        var logW = Math.Max(220, contentW - actionW - colGap);
+        var summaryY = contentY + contentH + 8;
 
         // Log panel
         var logX = contentX;
         var logY = contentY;
         var logH = contentH;
         DrawPanel(logX, logY, logW, logH, ColPanelSoft, ColBorder);
-        Raylib.DrawText("Combat Log", logX + 10, logY + 8, 20, ColSkyBlue);
+        DrawTextLine("Combat Log", logX + 12, logY + 8, 18, ColSkyBlue);
 
-        var lineY = logY + 40;
-        foreach (var line in _combatLog.TakeLast(GetCombatLogVisibleLines()))
+        var lineStartY = logY + 34;
+        var lineStep = _settingsVerboseCombatLog ? 22 : 24;
+        var maxLogLines = Math.Max(1, (logH - 42) / lineStep);
+        var targetLogLines = Math.Min(GetCombatLogVisibleLines(), maxLogLines);
+        var lineY = lineStartY;
+        foreach (var line in _combatLog.TakeLast(targetLogLines))
         {
-            Raylib.DrawText(line, logX + 12, lineY, 17, ColLightGray);
-            lineY += 26;
+            DrawTextClamped(line, logX + 14, lineY, 16, logW - 28, ColLightGray);
+            lineY += lineStep;
         }
 
         // Actions panel
         var actionX = logX + logW + colGap;
-        var actionY = contentY;
-        var actionH = contentH;
+        var actionH = submenuOpen
+            ? Math.Clamp(h / 3, 204, 216)
+            : Math.Clamp(h / 3, 216, 232);
+        var actionY = h - actionH - 78;
         DrawPanel(actionX, actionY, actionW, actionH, ColPanelSoft, ColBorder);
-        Raylib.DrawText("Actions", actionX + 22, actionY + 8, 20, ColSkyBlue);
+        DrawTextLine("Actions", actionX + 12, actionY + 8, 18, ColSkyBlue);
+        DrawTextClamped($"Target {activeTargetIndex + 1}/{Math.Max(1, aliveTargets.Count)}  {_currentEnemy.Type.Name}", actionX + 12, actionY + 34, 16, actionW - 24, ColAccentRose);
+        DrawTextClamped($"HP {enemyHp}/{_currentEnemy.Type.MaxHp}  Dist {meleeValidation.DistanceTiles}/{meleeValidation.MaxRangeTiles}  {losLabel}", actionX + 12, actionY + 54, 14, actionW - 24, ColWhite);
+        DrawTextClamped(attackReadinessLabel, actionX + 12, actionY + 72, 14, actionW - 24, meleeValidation.IsLegal ? ColGreen : ColYellow);
 
         var actions = GetCombatActions();
-        for (var i = 0; i < actions.Count; i++)
+        var actionRowsTop = actionY + 92;
+        var actionRowsBottom = actionY + actionH - 10;
+        var actionRowStep = 24;
+        var visibleActionRows = Math.Max(1, (actionRowsBottom - actionRowsTop) / actionRowStep);
+        _selectedActionIndex = Math.Clamp(_selectedActionIndex, 0, Math.Max(0, actions.Count - 1));
+        var actionOffset = 0;
+        if (_selectedActionIndex >= visibleActionRows)
         {
-            var selected = i == Math.Min(_selectedActionIndex, actions.Count - 1);
-            var rowY = actionY + 48 + i * 44;
-            DrawMenuRow(actionX + 10, rowY, actionW - 20, 36, selected);
-            DrawCenteredText(actions[i], actionX + actionW / 2, rowY + 8, 22, selected ? ColYellow : ColWhite);
+            actionOffset = _selectedActionIndex - visibleActionRows + 1;
+        }
+
+        for (var slot = 0; slot < visibleActionRows; slot++)
+        {
+            var i = actionOffset + slot;
+            if (i >= actions.Count) break;
+            var selected = i == _selectedActionIndex;
+            var rowY = actionRowsTop + slot * actionRowStep;
+            DrawMenuRow(actionX + 10, rowY, actionW - 20, 22, selected);
+            var marker = selected ? ">" : " ";
+            DrawTextClamped($"{marker} {actions[i]}", actionX + 14, rowY + 2, 16, actionW - 28, selected ? ColYellow : ColWhite);
+        }
+
+        if (actionOffset > 0)
+        {
+            DrawCenteredText("...more above...", actionX + actionW / 2, actionRowsTop - 16, 11, ColGray);
+        }
+        if (actionOffset + visibleActionRows < actions.Count)
+        {
+            DrawCenteredText("...more below...", actionX + actionW / 2, actionRowsBottom - 2, 11, ColGray);
         }
 
         var armorStyleDefense = GetArmorStateDefenseBonus(_player);
         var armorStyleFlee = GetArmorStateFleeBonus(_player);
         var totalDefense = _player.DefenseBonus + GetClassDefenseBonus(_player) + _runDefenseBonus + armorStyleDefense + GetConditionDefenseModifier();
         var fleeChance = Math.Clamp(50 + _player.FleeBonus + GetClassFleeBonus(_player) + _runFleeBonus + armorStyleFlee + GetConditionFleeModifier(), 5, 95);
-        Raylib.DrawText($"HP {_player.CurrentHp}/{_player.MaxHp}", actionX + 10, actionY + actionH - 96, 13, ColGreen);
-        Raylib.DrawText($"MP {_player.CurrentMana}/{_player.MaxMana}", actionX + 10, actionY + actionH - 80, 13, ColSkyBlue);
-        Raylib.DrawText($"Move {_combatMovePointsRemaining}/{_combatMovePointsMax}", actionX + 10, actionY + actionH - 64, 13, ColYellow);
-        Raylib.DrawText($"DEF {totalDefense}  Flee {fleeChance}%", actionX + 10, actionY + actionH - 48, 13, ColLightGray);
+        var hpText = _playerTempHp > 0
+            ? $"HP {_player.CurrentHp}/{_player.MaxHp} | Temp {_playerTempHp}"
+            : $"HP {_player.CurrentHp}/{_player.MaxHp}";
+        var moveText = $"Move {_combatMovePointsRemaining}/{_combatMovePointsMax}";
         var condSummary = GetActiveMajorConditionSummary();
-        Raylib.DrawText($"Cond: {condSummary}", actionX + 10, actionY + actionH - 32, 12, _settingsOptionalConditionsEnabled ? ColAccentRose : ColGray);
-        Raylib.DrawText(_player.CharacterClass.Name, actionX + 10, actionY + actionH - 20, 13, ColWhite);
-        Raylib.DrawText(GetClassCombatTag(_player.CharacterClass.Name), actionX + 10, actionY + actionH - 6, 12, ColSkyBlue);
+        var playerCondText = _playerConditions.Count > 0
+            ? "  |  " + string.Join(", ", _playerConditions.Select(c => $"{c.Kind}({c.RemainingTurns}t)"))
+            : string.Empty;
+        var sRow1Y = summaryY + summaryPad;
+        var sRow2Y = sRow1Y + UiLineH(14);
+        DrawPanel(12, summaryY, w - 24, summaryH, new Color(14, 18, 28, 220), ColBorder);
+        DrawTextClamped($"{hpText}  |  {moveText}  |  DEF {totalDefense}  |  Flee {fleeChance}%{playerCondText}", 20, sRow1Y, 14, w - 40, _playerConditions.Count > 0 ? ColAccentRose : ColLightGray);
+        DrawTextClamped($"Targets: {targetRoster}  |  Effects: {statusLabel}  |  Conc: {concentrationLabel}  |  Cond: {condSummary}", 20, sRow2Y, 13, w - 40, _settingsOptionalConditionsEnabled ? ColAccentRose : ColGray);
+        if (hasActiveBuffs)
+        {
+            var buffParts = new List<string>();
+            if (_divineFavorActive) buffParts.Add("Divine Favor +1d4");
+            if (_magicWeaponActive) buffParts.Add("Magic Weapon +1d6");
+            if (_flameArrowsActive) buffParts.Add("Flame Arrows +1d8");
+            if (_crusadersMantleActive) buffParts.Add("Crusader's Mantle +1d6");
+            if (_zephyrStrikeActive) buffParts.Add(_zephyrStrikeHitPrimed ? "Zephyr Strike +1d8 (primed)" : "Zephyr Strike (spent)");
+            if (_shieldOfFaithActive) buffParts.Add("Shield of Faith +2 AC");
+            if (_blessActive) buffParts.Add("Bless +1d4 atk/saves");
+            if (_heroismActive) buffParts.Add("Heroism (temp HP/turn)");
+            if (_mageArmorActive) buffParts.Add("Mage Armor +3 AC");
+            if (_shieldSpellActive) buffParts.Add("Shield +5 AC (1 turn)");
+            if (_barkskinActive) buffParts.Add("Barkskin AC\u226516");
+            if (_blurActive) buffParts.Add("Blur (enemy disadv.)");
+            if (_hasteActive) buffParts.Add("Haste +2 AC/move");
+            if (_aidMaxHpBonus > 0) buffParts.Add($"Aid +{_aidMaxHpBonus} max HP");
+            // Batch 2
+            if (_mirrorImageCharges > 0) buffParts.Add($"Mirror Image ({_mirrorImageCharges})");
+            if (_absorbElementsCharged) buffParts.Add("Absorb Elements (charged)");
+            if (_expeditiousRetreatActive) buffParts.Add("Exp. Retreat +15% flee");
+            if (_longstriderActive) buffParts.Add("Longstrider +2 move");
+            if (_hexActive) buffParts.Add("Hex +1d4, enemy -2 atk");
+            if (_protFromEvilActive) buffParts.Add("Protection +1 AC");
+            if (_sanctuaryActive) buffParts.Add("Sanctuary");
+            if (_compelledDuelActive) buffParts.Add("Compelled Duel +2 melee");
+            if (_enhanceAbilityActive) buffParts.Add("Enhance Ability +2 AC/+3 flee");
+            // Batch 3
+            if (_hellishRebukePrimed) buffParts.Add("Hellish Rebuke (primed)");
+            if (_armorOfAgathysTempHp > 0) buffParts.Add($"Armor of Agathys ({_armorOfAgathysTempHp} frost HP)");
+            if (_fireShieldActive) buffParts.Add("Fire Shield (2d8 fire)");
+            if (_wrathOfStormPrimed) buffParts.Add("Wrath of Storm (primed)");
+            if (_spiritShroudActive) buffParts.Add("Spirit Shroud +1d8 melee/1d6 reactive");
+            if (_deathWardActive) buffParts.Add("Death Ward (active)");
+            if (_holyRebukePrimed) buffParts.Add("Holy Rebuke (primed)");
+            if (_thornsActive) buffParts.Add("Thorns (1d6 pierce)");
+            if (_stoneskinActive) buffParts.Add("Stoneskin (-3 dmg)");
+            if (_cuttingWordsPrimed) buffParts.Add("Cutting Words (primed)");
+            if (_greaterInvisibilityActive) buffParts.Add("Greater Invisibility (adv/disadv)");
+            // Batch 4+5
+            if (_counterspellPrimed) buffParts.Add("Counterspell (primed)");
+            if (_invisibilityActive) buffParts.Add("Invisibility (-15% hit)");
+            if (_elementalWeaponActive) buffParts.Add($"Elemental Weapon ({_elementalWeaponElement})");
+            if (_revivifyUsed) buffParts.Add("Revivify (used)");
+            if (_blinkActive) buffParts.Add("Blink (30% dodge)");
+            if (_protEnergyActive) buffParts.Add($"Prot. Energy ({_protEnergyElement})");
+            if (_beaconOfHopeActive) buffParts.Add("Beacon of Hope (next heal x2)");
+            if (_majorImageActive) buffParts.Add("Major Image (25% dodge)");
+            if (_auraOfCourageActive) buffParts.Add("Aura of Courage (-1 turn conds)");
+            var sRow3Y = sRow2Y + UiLineH(13);
+            DrawTextClamped($"Buffs: {string.Join("  |  ", buffParts)}", 20, sRow3Y, 13, w - 40, ColYellow);
+        }
+        if (hasActiveSummon)
+        {
+            var summonHp = _activeSummon!.Type.MaxHp == 0 ? "invulnerable" : $"{_activeSummon.CurrentHp}/{_activeSummon.Type.MaxHp} hp";
+            var summonRowY = (hasActiveBuffs ? sRow2Y + UiLineH(13) + UiLineH(13) : sRow2Y + UiLineH(13));
+            DrawTextClamped($"Summon: {_activeSummon.Type.Name} ({summonHp})", 20, summonRowY, 13, w - 40, ColGreen);
+        }
+        if (hasActiveTransformation)
+        {
+            var extraRows = (hasActiveBuffs ? 1 : 0) + (hasActiveSummon ? 1 : 0);
+            var transformRowY = sRow2Y + UiLineH(13) * (1 + extraRows);
+            DrawTextClamped($"Form: {_activeTransformation!.Form.Name} ({_activeTransformation.TempHpRemaining}/{_activeTransformation.Form.TempHp} temp HP)", 20, transformRowY, 13, w - 40, ColCyan);
+        }
 
         DrawFooterBar(
-            UiLayout.CombatFooterInset,
-            h - UiLayout.CombatFooterInset,
-            w - UiLayout.CombatFooterInset * 2,
+            12,
+            h - 34,
+            w - 24,
             24);
         if (_combatMoveModeActive)
         {
-            DrawCenteredText($"Move Mode: ARROWS/WASD step  |  ENTER/ESC end move  |  Remaining {_combatMovePointsRemaining}", w / 2, h - 58, 15, ColLightGray);
+            DrawCenteredTextClamped($"Move Mode: ARROWS/WASD step  |  ENTER/ESC end move  |  Remaining {_combatMovePointsRemaining}", w / 2, h - 30, 14, w - 40, ColLightGray);
         }
         else
         {
-            DrawCenteredText($"UP/DOWN action  |  LEFT/RIGHT target  |  ENTER act  |  Arc {_milestoneArcChargesThisCombat}  Escape {_milestoneEscapeChargesThisCombat}", w / 2, h - 58, 15, ColLightGray);
+            var combatFooter = EnableRunMetaLayer
+                ? $"UP/DOWN action  |  LEFT/RIGHT target  |  ENTER act  |  Wait passes turn  |  Arc {_milestoneArcChargesThisCombat}"
+                : "UP/DOWN action  |  LEFT/RIGHT target  |  ENTER act  |  Wait passes turn";
+            DrawCenteredTextClamped(combatFooter, w / 2, h - 30, 14, w - 40, ColLightGray);
         }
+    }
+
+    private static void GetCombatSubmenuPanelBounds(int screenW, int screenH, out int panelX, out int panelY, out int panelW, out int panelH)
+    {
+        panelW = Math.Min(Math.Clamp(screenW / 3 + 36, 360, 430), screenW - 32);
+        panelH = Math.Min(Math.Clamp(screenH / 3 + 8, 204, 236), screenH - UiLayout.HudHeight - 110);
+        panelY = screenH - panelH - 118;
+        panelX = screenW - panelW - 16;
+    }
+
+    // Expanded centered panel for the spell menu — much more room with large spell rosters.
+    private static void GetCombatSpellPanelBounds(int screenW, int screenH, out int panelX, out int panelY, out int panelW, out int panelH)
+    {
+        panelW = Math.Min(Math.Max(600, screenW * 2 / 3), screenW - 40);
+        panelH = Math.Min(Math.Max(420, screenH - 160), screenH - 40);
+        panelX = (screenW - panelW) / 2;
+        panelY = (screenH - panelH) / 2;
     }
 
     private void DrawCombatSkillMenu()
@@ -10407,43 +16038,115 @@ public sealed class Game : IDisposable
         if (skillIds.Count == 0) return;
 
         var w = Raylib.GetScreenWidth();
-        var panelW = w - 120;
-        var panelX = 60;
-        var panelY = 118;
-        var panelH = 200;
+        var h = Raylib.GetScreenHeight();
+        GetCombatSubmenuPanelBounds(w, h, out var panelX, out var panelY, out var panelW, out var panelH);
+        var panelCenterX = panelX + panelW / 2;
+        EnsureCombatSkillSelectionVisible(skillIds.Count);
+        var visibleRows = Math.Max(1, Math.Min(SkillVisibleCount, (panelH - 118) / 28));
+        _combatSkillMenuOffset = ClampMenuOffsetToVisibleCount(_selectedCombatSkillIndex, skillIds.Count, _combatSkillMenuOffset, visibleRows);
+        var start = _combatSkillMenuOffset;
+        var end = Math.Min(skillIds.Count, start + visibleRows);
 
         DrawPanel(panelX, panelY, panelW, panelH, ColPanelAlt, ColBorder);
-        DrawCenteredText("Combat Skills", w / 2, panelY + 12, 28, ColSkyBlue);
+        DrawCenteredText("Combat Skills", panelCenterX, panelY + 12, 28, ColSkyBlue);
 
-        for (var i = 0; i < skillIds.Count; i++)
+        for (var i = start; i < end; i++)
         {
             var id = skillIds[i];
             var selected = i == _selectedCombatSkillIndex;
             var marker = selected ? "> " : "  ";
             var label = id switch
             {
-                "second_wind" => "Second Wind (1/combat)",
-                "mana_shield" => $"Mana Shield (MP 3)",
-                _ => id
+                "second_wind"               => "Second Wind (1/combat)",
+                "mana_shield"               => "Arcane Ward (1/combat)",
+                "channel_divinity"          => "Channel Divinity (1/combat)",
+                "cutting_words"             => "Cutting Words (1/combat)",
+                "lay_on_hands"              => "Lay on Hands (1/combat)",
+                "warrior_battle_cry_feat"   => "Battle Cry (1/combat)",
+                "rogue_vanish_feat"         => "Vanish (1/combat)",
+                "paladin_divine_smite_feat" => "Divine Smite (1/combat)",
+                "mage_empower_spell_feat"     => "Empower Spell (1/combat)",
+                "cleric_word_of_renewal_feat" => "Word of Renewal (1/combat)",
+                "lucky_feat"               => "Lucky (1/combat)",
+                "mage_metamagic_feat"      => "Heightened Spell (1/combat)",
+                "ranger_sharpshooter_feat"   => "Sharpshooter (1/combat)",
+                "paladin_divine_favor_feat"  => "Divine Favor (1/combat)",
+                _                            => id
             };
-            var affordable = id != "mana_shield" || _player.CurrentMana >= 3;
+            var affordable = true;
             var color = !affordable ? ColGray : selected ? ColYellow : ColWhite;
-            var rowY = panelY + 50 + i * 34;
-            DrawMenuRow(panelX + 22, rowY - 4, panelW - 44, 30, selected && affordable);
-            DrawCenteredText($"{marker}{label}", w / 2, rowY + 2, 21, color);
+            var rowY = panelY + 48 + (i - start) * 28;
+            DrawMenuRow(panelX + 18, rowY - 3, panelW - 36, 24, selected && affordable);
+            DrawCenteredTextClamped($"{marker}{label}", panelCenterX, rowY + 2, 18, panelW - 48, color);
+        }
+
+        if (start > 0)
+        {
+            DrawCenteredText("...more above...", panelCenterX, panelY + 34, 14, ColGray);
+        }
+        if (end < skillIds.Count)
+        {
+            DrawCenteredText("...more below...", panelCenterX, panelY + panelH - 74, 14, ColGray);
         }
 
         var chosenId = skillIds[Math.Min(_selectedCombatSkillIndex, skillIds.Count - 1)];
         var desc = chosenId switch
         {
-            "second_wind" => "Recover HP based on Constitution, then enemy acts.",
-            "mana_shield" => "Spend mana to absorb damage on the next enemy attack.",
-            _ => "Class combat skill."
+            "second_wind"      => "Recover HP based on Constitution, then enemy acts.",
+            "mana_shield"      => "Channel arcane energy to absorb the next enemy attack (once per combat).",
+            "channel_divinity" => $"Prime your next spell with divine power (+{_player?.ChannelDivinityBonus ?? 0} damage, 1/combat).",
+            "cutting_words"    => "Undermine the enemy's attack with a biting insult — reduces their next roll by 1d4.",
+            "lay_on_hands"            => $"Restore {_player?.LayOnHandsHeal ?? 0} HP through sacred touch, then enemy acts.",
+            "lucky_feat"               => "Prime Lucky — next attack is a guaranteed critical hit.",
+            "mage_metamagic_feat"      => "Heightened Spell — next spell forces the enemy to roll their save twice, taking the lower result.",
+            "ranger_sharpshooter_feat" => "Precision shot — next physical attack ignores all armor and deals +5 bonus damage.",
+            _                          => "Class combat feature."
         };
-        DrawCenteredText(desc, w / 2, panelY + panelH - 56, 17, ColLightGray);
-        DrawCenteredText($"Current MP: {_player.CurrentMana}/{_player.MaxMana}", w / 2, panelY + panelH - 34, 16, ColSkyBlue);
+        DrawCenteredTextClamped(desc, panelCenterX, panelY + panelH - 52, 15, panelW - 24, ColLightGray);
         DrawFooterBar(panelX + 10, panelY + panelH - 22, panelW - 20, 16);
-        DrawCenteredText("ENTER cast  |  ESC back", w / 2, panelY + panelH - 21, 13, ColLightGray);
+        DrawCenteredTextClamped("ENTER cast  |  ESC back", panelCenterX, panelY + panelH - 21, 13, panelW - 24, ColLightGray);
+    }
+
+    private void DrawFormSelectionUi()
+    {
+        var w = Raylib.GetScreenWidth();
+        var h = Raylib.GetScreenHeight();
+        GetCombatSubmenuPanelBounds(w, h, out var panelX, out var panelY, out var panelW, out var panelH);
+        DrawPanel(panelX, panelY, panelW, panelH, ColPanel, ColBorder);
+
+        var titleY = panelY + 8;
+        DrawCenteredTextClamped("Choose a Form:", panelX + panelW / 2, titleY, 16, panelW - 16, ColYellow);
+
+        var rowStartY = titleY + 26;
+        var rowH = 20;
+        var maxVisible = Math.Max(1, (panelH - 64) / rowH);
+        var offset = Math.Max(0, _formSelectionIndex - maxVisible + 1);
+
+        for (var i = 0; i < maxVisible && offset + i < _pendingFormOptions.Length; i++)
+        {
+            var idx = offset + i;
+            var formId = _pendingFormOptions[idx];
+            if (!SpellData.Forms.TryGetValue(formId, out var form)) continue;
+
+            var selected = idx == _formSelectionIndex;
+            var rowY = rowStartY + i * rowH;
+            if (selected)
+                DrawMenuRow(panelX + 6, rowY - 1, panelW - 12, rowH, true);
+
+            var marker = selected ? ">" : " ";
+            var stats = $"AC{form.FormAC} ATK+{form.AttackBonus} {form.DamageCount}d{form.DamageDice}+{form.DamageBonus} HP{form.TempHp}";
+            DrawTextClamped($"{marker} {form.Name} — {stats}", panelX + 10, rowY + 2, 13, panelW - 20, selected ? ColYellow : ColWhite);
+        }
+
+        // Description of selected form
+        if (_formSelectionIndex >= 0 && _formSelectionIndex < _pendingFormOptions.Length
+            && SpellData.Forms.TryGetValue(_pendingFormOptions[_formSelectionIndex], out var selForm))
+        {
+            var descY = panelY + panelH - 38;
+            DrawTextClamped(selForm.Description, panelX + 10, descY, 12, panelW - 20, ColCyan);
+        }
+
+        DrawCenteredTextClamped("ENTER select  |  ESC back", panelX + panelW / 2, panelY + panelH - 21, 13, panelW - 24, ColLightGray);
     }
 
     private void DrawCombatSpellMenu()
@@ -10454,60 +16157,92 @@ public sealed class Game : IDisposable
         if (spells.Count == 0) return;
 
         var w = Raylib.GetScreenWidth();
-        var panelW = w - 120;
-        var panelX = 60;
-        var panelY = 108;
-        var panelH = 230;
+        var h = Raylib.GetScreenHeight();
+        GetCombatSpellPanelBounds(w, h, out var panelX, out var panelY, out var panelW, out var panelH);
+        var panelCenterX = panelX + panelW / 2;
+
+        // Reserve bottom area for target/effect summary (3 rows + footer = ~90px)
+        const int headerH = 52;
+        const int footerH = 96;
+        const int rowH = 44; // two-line rows: name line + description line
+        var listTop = panelY + headerH;
+        var listBottom = panelY + panelH - footerH;
+        var visibleRows = Math.Max(1, (listBottom - listTop) / rowH);
 
         DrawPanel(panelX, panelY, panelW, panelH, ColPanelAlt, ColBorder);
-        DrawCenteredText("Spells", w / 2, panelY + 10, 30, ColSkyBlue);
+        DrawCenteredText("— Spells —", panelCenterX, panelY + 10, 28, ColSkyBlue);
 
-        EnsureSpellSelectionVisible(spells.Count);
+        _spellMenuOffset = ClampMenuOffsetToVisibleCount(_selectedSpellIndex, spells.Count, _spellMenuOffset, visibleRows);
         var start = _spellMenuOffset;
-        var end = Math.Min(spells.Count, start + SpellMenuVisibleCount);
+        var end = Math.Min(spells.Count, start + visibleRows);
+
+        if (start > 0)
+            DrawCenteredText("▲ more above", panelCenterX, listTop - 14, 13, ColGray);
+
         for (var i = start; i < end; i++)
         {
             var spell = spells[i];
             var selected = i == _selectedSpellIndex;
-            var marker = selected ? "> " : "  ";
             var slots = spell.RequiresSlot ? _player.GetSpellSlots(spell.SpellLevel) : 0;
             var slotsMax = spell.RequiresSlot ? _player.GetSpellSlotsMax(spell.SpellLevel) : 0;
             var usable = !spell.RequiresSlot || slots > 0;
-            var color = !usable ? ColGray : selected ? ColYellow : ColWhite;
-            var tierLabel = spell.IsCantrip ? "Cantrip" : $"L{spell.SpellLevel}";
-            var costLabel = spell.IsCantrip ? "No slot cost" : $"Slots {slots}/{slotsMax}";
-            var rowY = panelY + 48 + (i - start) * 28;
-            DrawMenuRow(panelX + 20, rowY - 3, panelW - 40, 24, selected && usable);
-            DrawCenteredText(
-                $"{marker}{spell.Name} ({tierLabel})  {costLabel}",
-                w / 2,
-                panelY + 52 + (i - start) * 28,
-                18,
-                color);
+            var nameColor = !usable ? ColGray : selected ? ColYellow : ColWhite;
+            var descColor = !usable ? new Color(80, 80, 80, 255) : selected ? new Color(220, 210, 130, 255) : ColLightGray;
+            var tierLabel = spell.IsCantrip ? "Cantrip" : $"Lv {spell.SpellLevel}";
+            var familyLabel = SpellData.GetCombatFamilyLabel(spell);
+            var costLabel = spell.IsCantrip ? "free" : $"{slots}/{slotsMax} slots";
+            var marker = selected ? "▶ " : "   ";
+
+            var rowY = listTop + (i - start) * rowH;
+            DrawMenuRow(panelX + 12, rowY, panelW - 24, rowH - 4, selected && usable);
+
+            // Name line
+            DrawCenteredTextClamped(
+                $"{marker}{spell.Name}   [{tierLabel} · {familyLabel}]   {costLabel}",
+                panelCenterX,
+                rowY + 6,
+                20,
+                panelW - 48,
+                nameColor);
+
+            // Description line (trimmed to single sentence for brevity)
+            var desc = spell.Description ?? string.Empty;
+            var dotIdx = desc.IndexOf('.');
+            var shortDesc = dotIdx > 0 ? desc[..(dotIdx + 1)] : (desc.Length > 80 ? desc[..80] + "…" : desc);
+            DrawCenteredTextClamped(
+                shortDesc,
+                panelCenterX,
+                rowY + 26,
+                14,
+                panelW - 64,
+                descColor);
         }
 
-        if (start > 0)
-        {
-            DrawCenteredText("...more above...", w / 2, panelY + 36, 14, ColGray);
-        }
         if (end < spells.Count)
-        {
-            DrawCenteredText("...more below...", w / 2, panelY + panelH - 60, 14, ColGray);
-        }
+            DrawCenteredText("▼ more below", panelCenterX, listTop + visibleRows * rowH + 2, 13, ColGray);
 
+        // Bottom info panel
+        var infoY = panelY + panelH - footerH + 4;
         var selectedSpell = spells[Math.Min(_selectedSpellIndex, spells.Count - 1)];
         var spellValidation = ValidateCurrentEnemyTargetForSpell(selectedSpell);
-        var spellLosLabel = spellValidation.HasLineOfSight ? "LOS clear" : "LOS blocked";
+        var spellLosLabel = spellValidation.HasLineOfSight ? "LOS ✓" : "LOS blocked";
         var spellTargetColor = spellValidation.IsLegal ? ColGreen : ColYellow;
-        DrawCenteredText(
-            $"Target {_currentEnemy?.Type.Name ?? "None"}  Dist {spellValidation.DistanceTiles}/{spellValidation.MaxRangeTiles}  {spellLosLabel}",
-            w / 2,
-            panelY + panelH - 62,
-            14,
-            spellTargetColor);
-        DrawCenteredText(selectedSpell.Description, w / 2, panelY + panelH - 44, 17, ColLightGray);
+        var selectedSpellTargetSummary = BuildSpellAffectedTargetSummary(selectedSpell);
+        var selectedSpellEffectSummary = BuildSpellEffectSummary(selectedSpell);
+
+        // Horizontal divider
+        Raylib.DrawLine(panelX + 16, infoY - 4, panelX + panelW - 16, infoY - 4, ColBorder);
+
+        DrawCenteredTextClamped(
+            UsesSelfCenteredSpellTargeting(selectedSpell)
+                ? $"Self-centered  ·  Dist {spellValidation.DistanceTiles}/{spellValidation.MaxRangeTiles}  ·  {spellLosLabel}"
+                : $"Target: {_currentEnemy?.Type.Name ?? "None"}  ·  Dist {spellValidation.DistanceTiles}/{spellValidation.MaxRangeTiles}  ·  {spellLosLabel}",
+            panelCenterX, infoY + 2, 16, panelW - 32, spellTargetColor);
+        DrawCenteredTextClamped(selectedSpellTargetSummary, panelCenterX, infoY + 22, 15, panelW - 32, ColLightGray);
+        DrawCenteredTextClamped(selectedSpellEffectSummary, panelCenterX, infoY + 42, 15, panelW - 32, ColSkyBlue);
+
         DrawFooterBar(panelX + 10, panelY + panelH - 22, panelW - 20, 16);
-        DrawCenteredText("ENTER target  |  ESC back", w / 2, panelY + panelH - 21, 13, ColLightGray);
+        DrawCenteredTextClamped("↑↓ navigate  |  ENTER select  |  ESC back", panelCenterX, panelY + panelH - 21, 13, panelW - 24, ColLightGray);
     }
 
     private void DrawCombatSpellTargeting()
@@ -10520,18 +16255,19 @@ public sealed class Game : IDisposable
         }
 
         var w = Raylib.GetScreenWidth();
-        var panelW = w - 120;
-        var panelX = 60;
-        var panelY = 108;
-        var panelH = 230;
+        var h = Raylib.GetScreenHeight();
+        GetCombatSubmenuPanelBounds(w, h, out var panelX, out var panelY, out var panelW, out var panelH);
+        var panelCenterX = panelX + panelW / 2;
         var tierLabel = pendingSpell.IsCantrip ? "Cantrip" : $"L{pendingSpell.SpellLevel}";
-        var validation = ValidateCurrentEnemyTargetForSpell(pendingSpell);
-        var targetName = _currentEnemy?.Type.Name ?? "None";
+        var validation = ValidateCombatSpellAim(pendingSpell);
+        var targetName = GetSpellTargetDescriptor(pendingSpell);
+        var variantLabel = GetSelectedPendingSpellVariantLabel(pendingSpell);
         var losLabel = validation.HasLineOfSight ? "LOS clear" : "LOS blocked";
-        var aliveLabel = validation.TargetAlive ? "Alive" : "Down";
         var legalityLabel = validation.IsLegal
             ? "Cast is legal."
-            : $"Blocked: {validation.BuildBlockedReason()}";
+            : $"Blocked: {validation.BlockedReason}";
+        var effectSummary = BuildSpellEffectSummary(pendingSpell);
+        var affectedSummary = BuildSpellAffectedTargetSummary(pendingSpell);
         var aliveTargets = GetAliveEncounterEnemies();
         var activeTargetIndex = aliveTargets.FindIndex(enemy => ReferenceEquals(enemy, _currentEnemy));
         if (activeTargetIndex < 0)
@@ -10540,24 +16276,47 @@ public sealed class Game : IDisposable
         }
 
         DrawPanel(panelX, panelY, panelW, panelH, ColPanelAlt, ColBorder);
-        DrawCenteredText("Spell Targeting", w / 2, panelY + 10, 30, ColSkyBlue);
-        DrawCenteredText($"{pendingSpell.Name} ({tierLabel})", w / 2, panelY + 52, 23, ColYellow);
-        DrawCenteredText(
-            $"Target {targetName}  {activeTargetIndex + 1}/{Math.Max(1, aliveTargets.Count)}",
-            w / 2,
+        DrawCenteredText("Spell Targeting", panelCenterX, panelY + 10, 30, ColSkyBlue);
+        DrawCenteredTextClamped($"{pendingSpell.Name} ({tierLabel})", panelCenterX, panelY + 52, 23, panelW - 24, ColYellow);
+        if (!string.IsNullOrWhiteSpace(variantLabel))
+        {
+            DrawCenteredTextClamped(variantLabel, panelCenterX, panelY + 71, 15, panelW - 24, ColSkyBlue);
+        }
+        DrawCenteredTextClamped(
+            UsesFreeTileSpellTargeting(pendingSpell)
+                ? $"{targetName}"
+                : $"Target {targetName}  {activeTargetIndex + 1}/{Math.Max(1, aliveTargets.Count)}",
+            panelCenterX,
             panelY + 86,
             19,
+            panelW - 24,
             ColWhite);
-        DrawCenteredText(
-            $"Range {validation.DistanceTiles}/{validation.MaxRangeTiles}  {losLabel}  {aliveLabel}",
-            w / 2,
+        DrawCenteredTextClamped(
+            $"Range {validation.DistanceTiles}/{validation.MaxRangeTiles}  {losLabel}",
+            panelCenterX,
             panelY + 114,
             16,
+            panelW - 24,
             validation.IsLegal ? ColGreen : ColYellow);
-        DrawCenteredText(legalityLabel, w / 2, panelY + 141, 15, validation.IsLegal ? ColGreen : ColYellow);
-        DrawCenteredText(pendingSpell.Description, w / 2, panelY + panelH - 44, 17, ColLightGray);
+        DrawCenteredTextClamped(legalityLabel, panelCenterX, panelY + 141, 15, panelW - 24, validation.IsLegal ? ColGreen : ColYellow);
+        DrawCenteredTextClamped(affectedSummary, panelCenterX, panelY + panelH - 56, 15, panelW - 24, ColLightGray);
+        DrawCenteredTextClamped(effectSummary, panelCenterX, panelY + panelH - 38, 14, panelW - 24, ColSkyBlue);
         DrawFooterBar(panelX + 10, panelY + panelH - 22, panelW - 20, 16);
-        DrawCenteredText("LEFT/RIGHT cycle target  |  ENTER confirm cast  |  ESC cancel", w / 2, panelY + panelH - 21, 13, ColLightGray);
+        DrawCenteredTextClamped(
+            UsesSelfCenteredSpellTargeting(pendingSpell)
+                ? "ENTER confirm cast  |  ESC cancel"
+                : UsesFreeTileSpellTargeting(pendingSpell)
+                    ? "ARROWS/WASD move anchor  |  ENTER confirm cast  |  ESC cancel"
+                    : "LEFT/RIGHT cycle target  |  ENTER confirm cast  |  ESC cancel",
+            panelCenterX,
+            panelY + panelH - 21,
+            13,
+            panelW - 24,
+            ColLightGray);
+        if (SpellSupportsVariantSelection(pendingSpell))
+        {
+            DrawCenteredTextClamped("UP/DOWN change mode", panelCenterX, panelY + panelH - 68, 14, panelW - 24, ColGray);
+        }
     }
 
     private void DrawCombatItemMenu()
@@ -10568,17 +16327,19 @@ public sealed class Game : IDisposable
         if (items.Count == 0) return;
 
         var w = Raylib.GetScreenWidth();
-        var panelW = w - 120;
-        var panelX = 60;
-        var panelY = 108;
-        var panelH = 230;
+        var h = Raylib.GetScreenHeight();
+        GetCombatSubmenuPanelBounds(w, h, out var panelX, out var panelY, out var panelW, out var panelH);
+        var panelCenterX = panelX + panelW / 2;
+        var listTop = panelY + 48;
+        var listBottom = panelY + panelH - 76;
+        var visibleRows = Math.Max(1, (listBottom - listTop) / 28);
 
         DrawPanel(panelX, panelY, panelW, panelH, ColPanelAlt, ColBorder);
-        DrawCenteredText("Consumables", w / 2, panelY + 10, 30, ColSkyBlue);
+        DrawCenteredText("Consumables", panelCenterX, panelY + 10, 30, ColSkyBlue);
 
-        EnsureCombatItemSelectionVisible(items.Count);
+        _combatItemMenuOffset = ClampMenuOffsetToVisibleCount(_selectedCombatItemIndex, items.Count, _combatItemMenuOffset, visibleRows);
         var start = _combatItemMenuOffset;
-        var end = Math.Min(items.Count, start + CombatItemVisibleCount);
+        var end = Math.Min(items.Count, start + visibleRows);
         for (var i = start; i < end; i++)
         {
             var item = items[i];
@@ -10588,7 +16349,7 @@ public sealed class Game : IDisposable
             DrawMenuRow(panelX + 20, rowY - 3, panelW - 40, 24, selected);
             DrawCenteredText(
                 $"{marker}{item.Name}  x{item.Quantity}",
-                w / 2,
+                panelCenterX,
                 panelY + 52 + (i - start) * 28,
                 18,
                 selected ? ColYellow : ColWhite);
@@ -10596,24 +16357,24 @@ public sealed class Game : IDisposable
 
         if (start > 0)
         {
-            DrawCenteredText("...more above...", w / 2, panelY + 36, 14, ColGray);
+            DrawCenteredText("...more above...", panelCenterX, panelY + 36, 14, ColGray);
         }
         if (end < items.Count)
         {
-            DrawCenteredText("...more below...", w / 2, panelY + panelH - 60, 14, ColGray);
+            DrawCenteredText("...more below...", panelCenterX, panelY + panelH - 76, 14, ColGray);
         }
 
         var selectedItem = items[Math.Min(_selectedCombatItemIndex, items.Count - 1)];
         var description = selectedItem.Id switch
         {
             "health_potion" => "Restore 35% HP. Consumes your turn.",
-            "mana_draught" => "Restore 35% MP. Consumes your turn.",
+            "healing_draught" => "Restore 35% HP. Consumes your turn.",
             "sharpening_oil" => "Gain +1 melee damage for this run. Consumes your turn.",
             _ => selectedItem.Description
         };
-        DrawCenteredText(description, w / 2, panelY + panelH - 44, 17, ColLightGray);
+        DrawCenteredTextClamped(description, panelCenterX, panelY + panelH - 44, 15, panelW - 24, ColLightGray);
         DrawFooterBar(panelX + 10, panelY + panelH - 22, panelW - 20, 16);
-        DrawCenteredText("ENTER use  |  ESC back", w / 2, panelY + panelH - 21, 13, ColLightGray);
+        DrawCenteredTextClamped("ENTER use  |  ESC back", panelCenterX, panelY + panelH - 21, 13, panelW - 24, ColLightGray);
     }
 
 
@@ -10621,13 +16382,17 @@ public sealed class Game : IDisposable
     {
         if (_player == null) return 0;
 
+        var screenW = Raylib.GetScreenWidth();
+        var rightX = 290;
+        var rightW = screenW - rightX - 46;
         var height = 0;
         height += 28 + 20 + 20 + 24; // progression
         height += 28 + 20 + 20 + 20 + 20 + 20; // combat profile
-        if (_player.IsCasterClass) height += 20;
+        if (_player.IsCasterClass) height += 40; // casting stat line + spell damage bonus line
         height += 8 + 28 + 20 + 20 + 20; // armor profile
         height += 8;
-        height += 28 + 20 + 20 + 20 + 20 + 20 + 20 + 32 + 8; // run identity
+        height += 28 + 20 + 20 + 20 + 20 + 20 + 20; // run identity fixed lines
+        height += MeasureWrappedTextHeight(GetPhase3ObjectiveLabel(), Math.Max(200, rightW - 24), 14) + 8;
         height += 20 + 24; // major conditions header and purge line
         if (_activeMajorConditions.Count == 0)
         {
@@ -10636,6 +16401,10 @@ public sealed class Game : IDisposable
         else
         {
             height += _activeMajorConditions.Count * (18 + 34);
+            foreach (var condition in _activeMajorConditions)
+            {
+                height += MeasureWrappedTextHeight(GetMajorConditionEffectSummary(condition.Type), Math.Max(180, rightW - 40), 13) - 34;
+            }
         }
         height += 8;
 
@@ -10694,7 +16463,7 @@ public sealed class Game : IDisposable
         Raylib.DrawRectangleLines(28, 24, w - 56, h - 48, new Color(96, 118, 148, 255));
 
         DrawCenteredText("Character Sheet", w / 2, 40, 32, ColWhite);
-        DrawCenteredText($"{_player.Name} - {_player.Race} {_player.Gender} {_player.CharacterClass.Name}", w / 2, 74, 20, ColLightGray);
+        DrawCenteredTextClamped($"{_player.Name} - {_player.Race} {_player.Gender} {_player.CharacterClass.Name}", w / 2, 74, 20, w - 120, ColLightGray);
 
         var leftX = 46;
         var leftY = 112;
@@ -10721,27 +16490,30 @@ public sealed class Game : IDisposable
         ly += 8;
         Raylib.DrawText($"HP {_player.CurrentHp}/{_player.MaxHp}", leftX + 10, ly, 18, ColGreen);
         ly += 22;
-        Raylib.DrawText($"MP {_player.CurrentMana}/{_player.MaxMana}", leftX + 10, ly, 18, ColSkyBlue);
-        ly += 22;
         Raylib.DrawText($"XP {_player.Xp}/{_player.XpToNextLevel}", leftX + 10, ly, 18, ColLightGray);
 
         ClampCharacterSheetScroll();
 
         var classMeleeBonus = GetClassMeleeDamageBonus(_player);
         var classSpellBonus = GetClassSpellDamageBonus(_player);
-        var classCritBonus = GetClassCritBonus(_player);
+        var classCritRangeBonus = GetClassCritRangeBonus(_player);
         var classDefenseBonus = GetClassDefenseBonus(_player);
-        var classEvasion = GetClassEvasionChance(_player);
         var classFleeBonus = GetClassFleeBonus(_player);
-        var critChance = Math.Max(5, 5 + _player.Mod(StatName.Dexterity) * 2 + _player.CritBonus + classCritBonus + _runCritBonus);
         var armorStyleDefense = GetArmorStateDefenseBonus(_player);
         var armorStyleFlee = GetArmorStateFleeBonus(_player);
         var equippedArmorItem = GetEquippedArmorItem();
         var armorState = GetCurrentArmorCategory();
         var armorStateLabel = GetArmorStateLabel(armorState);
         var armorTrainingSummary = GetArmorTrainingSummary(_player);
-        var totalDefense = _player.DefenseBonus + classDefenseBonus + _runDefenseBonus + armorStyleDefense + GetConditionDefenseModifier();
         var totalFleeChance = Math.Clamp(50 + _player.FleeBonus + classFleeBonus + _runFleeBonus + armorStyleFlee + GetConditionFleeModifier(), 5, 95);
+        var hudCritThreshold = Math.Max(2, _player.CritThreshold - classCritRangeBonus - _runCritBonus);
+        var hudWeapon = GetEquippedWeaponDef();
+        var hudAtkStat = hudWeapon.IsFinesse
+            ? (_player.Mod(StatName.Strength) >= _player.Mod(StatName.Dexterity) ? StatName.Strength : StatName.Dexterity)
+            : (hudWeapon.IsRanged ? StatName.Dexterity : hudWeapon.AttackStat);
+        var hudAtkBonus = _player.Mod(hudAtkStat) + GetProficiencyBonus();
+        var hudAtkBonusStr = hudAtkBonus >= 0 ? $"+{hudAtkBonus}" : $"{hudAtkBonus}";
+        var rightTextW = Math.Max(220, rightW - 24);
 
         // Right panel content supports scrolling for long builds.
         Raylib.BeginScissorMode(rightX + 1, rightY + 1, rightW - 2, rightH - 2);
@@ -10749,28 +16521,33 @@ public sealed class Game : IDisposable
 
         Raylib.DrawText("Progression", rightX + 10, ry, 22, ColSkyBlue);
         ry += 28;
-        Raylib.DrawText($"Level {_player.Level}   Class {_player.CharacterClass.Name}", rightX + 10, ry, 16, ColLightGray);
+        DrawTextClamped($"Level {_player.Level}   Class {_player.CharacterClass.Name}", rightX + 10, ry, 16, rightTextW, ColLightGray);
         ry += 20;
-        Raylib.DrawText($"XP: {_player.Xp}/{_player.XpToNextLevel}", rightX + 10, ry, 16, ColLightGray);
+        DrawTextClamped($"XP: {_player.Xp}/{_player.XpToNextLevel}", rightX + 10, ry, 16, rightTextW, ColLightGray);
         ry += 20;
-        Raylib.DrawText($"Unspent points -> Stat {_player.StatPoints} / Feat {_player.FeatPoints} / Spell {_player.SpellPickPoints}", rightX + 10, ry, 15, ColLightGray);
+        DrawTextClamped($"Unspent points -> Stat {_player.StatPoints} / Feat {_player.FeatPoints} / Spell {_player.SpellPickPoints}", rightX + 10, ry, 15, rightTextW, ColLightGray);
         ry += 24;
 
         Raylib.DrawText("Combat Profile", rightX + 10, ry, 22, ColYellow);
         ry += 28;
-        Raylib.DrawText($"Role: {GetClassCombatTag(_player.CharacterClass.Name)}", rightX + 10, ry, 16, ColLightGray);
+        DrawTextClamped($"Role: {GetClassCombatTag(_player.CharacterClass.Name)}", rightX + 10, ry, 16, rightTextW, ColLightGray);
         ry += 20;
-        Raylib.DrawText($"Melee bonus: {_player.MeleeDamageBonus + classMeleeBonus + _runMeleeBonus + GetConditionMeleeModifier()}", rightX + 10, ry, 16, ColLightGray);
+        DrawTextClamped($"Attack: d20{hudAtkBonusStr} ({hudWeapon.Name} {hudWeapon.DiceCount}d{hudWeapon.DamageDice})", rightX + 10, ry, 16, rightTextW, ColLightGray);
         ry += 20;
-        Raylib.DrawText($"Crit chance: {critChance}%", rightX + 10, ry, 16, ColLightGray);
+        DrawTextClamped($"Crit range: {hudCritThreshold}+ on d20", rightX + 10, ry, 16, rightTextW, ColLightGray);
         ry += 20;
-        Raylib.DrawText($"Defense: {totalDefense}", rightX + 10, ry, 16, ColLightGray);
+        DrawTextClamped($"AC: {GetPlayerArmorClass()} ({armorStateLabel})", rightX + 10, ry, 16, rightTextW, ColLightGray);
         ry += 20;
-        Raylib.DrawText($"Flee chance: {totalFleeChance}%  Evasion: {classEvasion}%", rightX + 10, ry, 16, ColLightGray);
+        DrawTextClamped($"Flee chance: {totalFleeChance}%", rightX + 10, ry, 16, rightTextW, ColLightGray);
         ry += 20;
         if (_player.IsCasterClass)
         {
-            Raylib.DrawText($"Spell damage bonus: {_player.SpellDamageBonus + classSpellBonus + _runSpellBonus + GetConditionSpellModifier()}", rightX + 10, ry, 16, ColLightGray);
+            var castingStatLabel = GetStatShortLabel(_player.CastingStat);
+            var castingMod = _player.Mod(_player.CastingStat);
+            var castingModStr = castingMod >= 0 ? $"+{castingMod}" : $"{castingMod}";
+            DrawTextClamped($"Casting stat: {castingStatLabel} ({castingModStr})  Save DC: {8 + (2 + Math.Max(0, (_player.Level - 1) / 4)) + Math.Max(0, castingMod)}", rightX + 10, ry, 16, rightTextW, ColLightGray);
+            ry += 20;
+            DrawTextClamped($"Spell damage bonus: {_player.SpellDamageBonus + classSpellBonus + _runSpellBonus + GetConditionSpellModifier()}", rightX + 10, ry, 16, rightTextW, ColLightGray);
             ry += 20;
         }
 
@@ -10779,68 +16556,69 @@ public sealed class Game : IDisposable
         ry += 8;
         Raylib.DrawText("Armor Profile", rightX + 10, ry, 22, ColSkyBlue);
         ry += 28;
-        Raylib.DrawText($"Equipped: {armorItemLabel} ({armorStateLabel})", rightX + 10, ry, 16, ColLightGray);
+        DrawTextClamped($"Equipped: {armorItemLabel} ({armorStateLabel})", rightX + 10, ry, 16, rightTextW, ColLightGray);
         ry += 20;
-        Raylib.DrawText($"Training: {armorTrainingSummary}", rightX + 10, ry, 16, ColLightGray);
+        DrawTextClamped($"Training: {armorTrainingSummary}", rightX + 10, ry, 16, rightTextW, ColLightGray);
         ry += 20;
-        Raylib.DrawText($"Armor style bonus: Defense +{armorStyleDefense}  Flee {armorStyleFleeLabel}", rightX + 10, ry, 16, ColLightGray);
+        DrawTextClamped($"Armor flee modifier: {armorStyleFleeLabel}", rightX + 10, ry, 16, rightTextW, ColLightGray);
         ry += 20;
 
         ry += 8;
-        Raylib.DrawText("Run Identity", rightX + 10, ry, 22, ColSkyBlue);
+        Raylib.DrawText(EnableRunMetaLayer ? "Run Identity" : "Dungeon Progress", rightX + 10, ry, 22, ColSkyBlue);
         ry += 28;
-        Raylib.DrawText($"Archetype: {GetRunArchetypeLabel(_runArchetype)}", rightX + 10, ry, 16, ColLightGray);
+        if (EnableRunMetaLayer)
+        {
+            DrawTextClamped($"Archetype: {GetRunArchetypeLabel(_runArchetype)}", rightX + 10, ry, 16, rightTextW, ColLightGray);
+            ry += 20;
+            DrawTextClamped($"Relic: {GetRunRelicLabel(_runRelic)}", rightX + 10, ry, 16, rightTextW, ColLightGray);
+            ry += 20;
+            DrawTextClamped($"Doctrines: {GetMilestoneRanksLabel()}", rightX + 10, ry, 16, rightTextW, ColLightGray);
+            ry += 20;
+            DrawTextClamped($"Combat charges: Arc {_milestoneArcChargesThisCombat}  Escape {_milestoneEscapeChargesThisCombat}", rightX + 10, ry, 16, rightTextW, ColLightGray);
+            ry += 20;
+            var xpRouteLabel = _phase3XpPercentMod > 0
+                ? $"+{_phase3XpPercentMod}%"
+                : $"{_phase3XpPercentMod}%";
+            DrawTextClamped($"Route pressure: XP {xpRouteLabel}  Enemy atk +{_phase3EnemyAttackBonus}", rightX + 10, ry, 16, rightTextW, ColLightGray);
+            ry += 20;
+        }
+        DrawTextClamped($"Current area: {GetFloorZoneLabel(_currentFloorZone)}", rightX + 10, ry, 16, rightTextW, ColLightGray);
         ry += 20;
-        Raylib.DrawText($"Relic: {GetRunRelicLabel(_runRelic)}", rightX + 10, ry, 16, ColLightGray);
-        ry += 20;
-        Raylib.DrawText($"Doctrines: {GetMilestoneRanksLabel()}", rightX + 10, ry, 16, ColLightGray);
-        ry += 20;
-        Raylib.DrawText($"Combat charges: Arc {_milestoneArcChargesThisCombat}  Escape {_milestoneEscapeChargesThisCombat}", rightX + 10, ry, 16, ColLightGray);
-        ry += 20;
-        var xpRouteLabel = _phase3XpPercentMod > 0
-            ? $"+{_phase3XpPercentMod}%"
-            : $"{_phase3XpPercentMod}%";
-        Raylib.DrawText($"Route pressure: XP {xpRouteLabel}  Enemy atk +{_phase3EnemyAttackBonus}", rightX + 10, ry, 16, ColLightGray);
-        ry += 20;
-        Raylib.DrawText($"Current macro zone: {GetFloorZoneLabel(_currentFloorZone)}", rightX + 10, ry, 16, ColLightGray);
-        ry += 20;
-        DrawWrappedText(GetPhase3ObjectiveLabel(), rightX + 10, ry, Math.Max(200, rightW - 24), 14, ColLightGray);
-        ry += 32;
+        ry += DrawWrappedText(GetPhase3ObjectiveLabel(), rightX + 10, ry, Math.Max(200, rightW - 24), 14, ColLightGray) + 8;
         Raylib.DrawText("Major Conditions", rightX + 10, ry, 20, ColAccentRose);
         ry += 24;
         if (_activeMajorConditions.Count == 0)
         {
-            Raylib.DrawText(_settingsOptionalConditionsEnabled ? "None active." : "Conditions disabled.", rightX + 10, ry, 15, ColLightGray);
+            DrawTextClamped(_settingsOptionalConditionsEnabled ? "None active." : "Conditions disabled.", rightX + 10, ry, 15, rightTextW, ColLightGray);
             ry += 20;
         }
         else
         {
             foreach (var condition in _activeMajorConditions)
             {
-                Raylib.DrawText($"{GetMajorConditionLabel(condition.Type)} ({condition.Source})", rightX + 10, ry, 15, ColWhite);
+                DrawTextClamped($"{GetMajorConditionLabel(condition.Type)} ({condition.Source})", rightX + 10, ry, 15, rightTextW, ColWhite);
                 ry += 18;
-                DrawWrappedText(GetMajorConditionEffectSummary(condition.Type), rightX + 20, ry, Math.Max(180, rightW - 40), 13, ColLightGray);
-                ry += 34;
+                ry += DrawWrappedText(GetMajorConditionEffectSummary(condition.Type), rightX + 20, ry, Math.Max(180, rightW - 40), 13, ColLightGray) + 6;
             }
         }
-        Raylib.DrawText($"High-tier purge: {GetConditionPurgeCostLabel()}", rightX + 10, ry, 14, ColSkyBlue);
+        DrawTextClamped($"High-tier purge: {GetConditionPurgeCostLabel()}", rightX + 10, ry, 14, rightTextW, ColSkyBlue);
         ry += 22;
         ry += 8;
 
-        Raylib.DrawText("Skills", rightX + 10, ry, 22, ColWhite);
+        Raylib.DrawText("Class Features", rightX + 10, ry, 22, ColWhite);
         ry += 28;
         if (_player.Skills.Count == 0)
         {
-            Raylib.DrawText("No skills learned yet.", rightX + 10, ry, 18, ColGray);
+            Raylib.DrawText("No class features yet.", rightX + 10, ry, 18, ColGray);
             ry += 24;
         }
         else
         {
             foreach (var skill in _player.Skills)
             {
-                Raylib.DrawText(skill.Name, rightX + 10, ry, 16, ColWhite);
+                DrawTextClamped(skill.Name, rightX + 10, ry, 16, rightTextW, ColWhite);
                 ry += 18;
-                Raylib.DrawText(_player.GetSkillEffectText(skill), rightX + 18, ry, 14, ColLightGray);
+                DrawTextClamped(_player.GetSkillEffectText(skill), rightX + 18, ry, 14, rightTextW - 8, ColLightGray);
                 ry += 20;
             }
         }
@@ -10857,9 +16635,9 @@ public sealed class Game : IDisposable
         {
             foreach (var feat in _player.Feats)
             {
-                Raylib.DrawText(feat.Name, rightX + 10, ry, 16, ColWhite);
+                DrawTextClamped(feat.Name, rightX + 10, ry, 16, rightTextW, ColWhite);
                 ry += 18;
-                Raylib.DrawText(_player.GetFeatEffectText(feat), rightX + 18, ry, 14, ColLightGray);
+                DrawTextClamped(_player.GetFeatEffectText(feat), rightX + 18, ry, 14, rightTextW - 8, ColLightGray);
                 ry += 20;
             }
         }
@@ -10882,7 +16660,7 @@ public sealed class Game : IDisposable
             foreach (var spell in _player.GetKnownSpells())
             {
                 var tierLabel = spell.IsCantrip ? "Cantrip" : $"L{spell.SpellLevel}";
-                Raylib.DrawText($"{tierLabel} {spell.Name}", rightX + 10, ry, 15, ColLightGray);
+                DrawTextClamped($"{tierLabel} {spell.Name}", rightX + 10, ry, 15, rightTextW, ColLightGray);
                 ry += 18;
             }
         }
@@ -10905,32 +16683,92 @@ public sealed class Game : IDisposable
             h - UiLayout.LevelPanelInsetY * 2,
             ColPanel,
             ColBorder);
-        DrawCenteredText("LEVEL UP!", w / 2, 78, 40, ColYellow);
-        DrawCenteredText($"Points to spend: {_player.StatPoints}", w / 2, 124, 24, ColWhite);
-        DrawCenteredText($"Feat picks pending: {_player.FeatPoints}", w / 2, 150, 20, ColSkyBlue);
-        DrawCenteredText($"Spell picks pending: {_player.SpellPickPoints}", w / 2, 172, 20, ColSkyBlue);
+        var panelTop = UiLayout.LevelPanelInsetY;
+        var headerY = panelTop + UiScale(14);
+        DrawCenteredText("LEVEL UP!", w / 2, headerY, 34, ColYellow);
 
-        for (var i = 0; i < StatOrder.Length; i++)
+        var subY = headerY + UiLineH(34);
+        DrawCenteredText($"Level {_player.Level - 1}  →  Level {_player.Level}", w / 2, subY, 16, ColLightGray);
+
+        var pendingY = subY + UiLineH(16);
+        var pendingParts = new System.Text.StringBuilder();
+        pendingParts.Append($"◆ {_player.StatPoints} stat point{(_player.StatPoints == 1 ? "" : "s")}");
+        if (_player.FeatPoints > 0)  pendingParts.Append($"  ·  {_player.FeatPoints} feat{(_player.FeatPoints == 1 ? "" : "s")}");
+        if (_player.SpellPickPoints > 0) pendingParts.Append($"  ·  {_player.SpellPickPoints} spell{(_player.SpellPickPoints == 1 ? "" : "s")}");
+        DrawCenteredText(pendingParts.ToString(), w / 2, pendingY, 14, ColSkyBlue);
+
+        var dividerY = pendingY + UiLineH(14) + UiScale(6);
+        Raylib.DrawLine(w / 2 - 200, dividerY, w / 2 + 200, dividerY, ColBorder);
+
+        var rowHeight = UiLineH(20) + 8;
+        var totalRows = StatOrder.Length + 3;
+        var listWidth = Math.Min(560, w - 220);
+        var listX = w / 2 - listWidth / 2;
+        var listAreaStart = dividerY + UiScale(8);
+        var footerTop = h - UiScale(72);
+        var listAreaH = footerTop - listAreaStart - UiScale(8);
+        var levelListTop = listAreaStart + Math.Max(0, (listAreaH - totalRows * rowHeight) / 2);
+        var rowH = rowHeight - 2; // inner row panel height (rowHeight includes the gap)
+        for (var i = 0; i < totalRows; i++)
         {
-            var stat = StatOrder[i];
+            // Draw a thin divider before the action rows (Undo/Reset/Continue).
+            if (i == StatOrder.Length)
+            {
+                var divY = levelListTop + i * rowHeight - UiScale(5);
+                Raylib.DrawLine(listX, divY, listX + listWidth, divY, ColBorder);
+            }
+
             var selected = i == _selectedStatIndex;
-            var rowY = 198 + i * 34;
-            DrawMenuRow(w / 2 - 184, rowY - 6, 368, 30, selected);
-            DrawCenteredText($"{stat}: {_player.Stats.Get(stat)}", w / 2, rowY, 23, selected ? ColYellow : ColWhite);
+            var rowY = levelListTop + i * rowHeight;
+            DrawMenuRow(listX, rowY - 4, listWidth, rowH, selected);
+            if (i < StatOrder.Length)
+            {
+                var stat = StatOrder[i];
+                var allocated = _levelUpAllocatedStats[i];
+                var allocLabel = allocated > 0 ? $"  (+{allocated})" : string.Empty;
+                DrawTextClamped($"{stat}: {_player.Stats.Get(stat)}{allocLabel}", listX + 12, rowY, 20, listWidth - 24, selected ? ColYellow : ColWhite);
+            }
+            else
+            {
+                var label = i switch
+                {
+                    var undoRow when undoRow == StatOrder.Length => "↩ Undo Last",
+                    var resetRow when resetRow == StatOrder.Length + 1 => "⟳ Reset All",
+                    _ => _player.StatPoints > 0
+                        ? $"► Continue  ({_player.StatPoints} point{(_player.StatPoints == 1 ? string.Empty : "s")} remaining)"
+                        : "► Continue to feat / spell / skill picks"
+                };
+                var color = i == StatOrder.Length + 2 && _player.StatPoints > 0
+                    ? ColGray
+                    : selected ? ColYellow : ColLightGray;
+                DrawTextClamped(label, listX + 12, rowY, 18, listWidth - 24, color);
+            }
         }
 
-        var selectedStat = StatOrder[Math.Clamp(_selectedStatIndex, 0, StatOrder.Length - 1)];
-        var selectedMod = _player.Mod(selectedStat);
-        DrawCenteredText($"Selected: {selectedStat} (modifier {selectedMod:+#;-#;0})", w / 2, h - 98, 16, ColLightGray);
+        var hintY = footerTop - UiLineH(16) - UiScale(4);
+        if (_selectedStatIndex < StatOrder.Length)
+        {
+            var selectedStat = StatOrder[Math.Clamp(_selectedStatIndex, 0, StatOrder.Length - 1)];
+            var selectedMod = _player.Mod(selectedStat);
+            DrawCenteredText($"Selected: {selectedStat} (modifier {selectedMod:+#;-#;0})  |  RIGHT/ENTER add  |  LEFT remove", w / 2, hintY, 15, ColLightGray);
+        }
+        else
+        {
+            DrawCenteredText(_levelUpSessionActive
+                ? "ENTER confirm row  |  ESC undo last allocation"
+                : "Review level-up choices before continuing",
+                w / 2, hintY, 15, ColLightGray);
+        }
 
         if (!string.IsNullOrWhiteSpace(_selectionMessage))
         {
-            DrawFooterBar(UiLayout.LevelFooterX, h - 96, w - UiLayout.LevelFooterInset, 18);
-            DrawCenteredText(_selectionMessage, w / 2, h - 95, 13, ColLightGray);
+            var msgBarY = footerTop - UiScale(4);
+            DrawFooterBar(UiLayout.LevelFooterX, msgBarY, w - UiLayout.LevelFooterInset, UiLineH(13) + UiScale(4));
+            DrawCenteredText(_selectionMessage, w / 2, msgBarY + UiScale(3), 13, ColLightGray);
         }
 
-        DrawFooterBar(UiLayout.LevelFooterX, h - 74, w - UiLayout.LevelFooterInset, 22);
-        DrawCenteredText("UP/DOWN choose stat  |  ENTER spend point", w / 2, h - 70, 15, ColLightGray);
+        DrawFooterBar(UiLayout.LevelFooterX, footerTop, w - UiLayout.LevelFooterInset, UiLineH(14) + UiScale(6));
+        DrawCenteredText("UP/DOWN browse  |  RIGHT/ENTER add  |  LEFT remove  |  ESC undo last  |  Continue when ready", w / 2, footerTop + UiScale(4), 14, ColLightGray);
     }
 
     private void DrawFeatSelection()
@@ -10959,32 +16797,35 @@ public sealed class Game : IDisposable
         EnsureFeatSelectionVisible(_featChoices.Count);
         var start = _featMenuOffset;
         var end = Math.Min(_featChoices.Count, start + FeatVisibleCount);
+        var featFooterTop = string.IsNullOrWhiteSpace(_selectionMessage) ? h - 58 : h - 82;
+        var featListTop = 142 + Math.Max(0, (featFooterTop - 30 - 142 - (end - start) * 68) / 2);
+        var selectionRowTextW = w - UiLayout.SelectionRowInset - 24;
         for (var i = start; i < end; i++)
         {
             var feat = _featChoices[i];
             var selected = i == _selectedFeatIndex;
-            var y = 148 + (i - start) * 68;
+            var y = featListTop + (i - start) * 68;
             var canLearn = _player.CanLearnFeat(feat, out var blockReason);
             var nameColor = canLearn ? (selected ? ColYellow : ColWhite) : ColGray;
             var statusColor = canLearn ? ColGreen : ColRed;
 
             DrawMenuRow(UiLayout.SelectionRowX, y - 8, w - UiLayout.SelectionRowInset, 62, selected);
-            DrawCenteredText(feat.Name, w / 2, y, 26, nameColor);
-            DrawCenteredText(feat.Description, w / 2, y + 22, 16, selected ? ColLightGray : ColGray);
+            DrawCenteredTextClamped(feat.Name, w / 2, y, 25, selectionRowTextW, nameColor);
+            DrawCenteredTextClamped($"Effect: {GetFeatEffectLabel(feat)}", w / 2, y + 22, 15, selectionRowTextW, selected ? ColLightGray : ColGray);
 
             var statusText = canLearn
-                ? $"Effect: {_player.GetFeatEffectText(feat)}"
+                ? $"Ready. Req: {GetFeatPrerequisiteLabel(feat)}"
                 : $"Locked: {blockReason}";
-            DrawCenteredText(statusText, w / 2, y + 40, 14, statusColor);
+            DrawCenteredTextClamped(statusText, w / 2, y + 40, 13, selectionRowTextW, statusColor);
         }
 
         if (start > 0)
         {
-            DrawCenteredText("...more above...", w / 2, 128, 14, ColGray);
+            DrawCenteredText("...more above...", w / 2, featListTop - 20, 14, ColGray);
         }
         if (end < _featChoices.Count)
         {
-            DrawCenteredText("...more below...", w / 2, h - 82, 14, ColGray);
+            DrawCenteredText("...more below...", w / 2, featListTop + (end - start) * 68 + 4, 14, ColGray);
         }
 
         if (!string.IsNullOrWhiteSpace(_selectionMessage))
@@ -11011,47 +16852,25 @@ public sealed class Game : IDisposable
             h - UiLayout.SelectionPanelInsetY * 2,
             ColPanel,
             ColBorder);
-        DrawCenteredText("Choose a New Skill", w / 2, 62, 34, ColWhite);
-        DrawCenteredText($"Available skills: {_skillChoices.Count}", w / 2, 98, 18, ColSkyBlue);
 
-        if (_skillChoices.Count == 0)
-        {
-            DrawCenteredText("No skills available.", w / 2, h / 2, 22, ColGray);
-            return;
-        }
+        DrawCenteredText("New Class Feature!", w / 2, 62, 34, ColYellow);
+        DrawCenteredText($"{_player.CharacterClass.Name} — Level {_player.Level}", w / 2, 102, 20, ColSkyBlue);
 
-        EnsureSkillSelectionVisible(_skillChoices.Count);
-        var start = _skillMenuOffset;
-        var end = Math.Min(_skillChoices.Count, start + SkillVisibleCount);
-        for (var i = start; i < end; i++)
+        var listTop = 160;
+        var rowH = 80;
+        var textW = w - UiLayout.SelectionRowInset - 24;
+        for (var i = 0; i < _skillChoices.Count; i++)
         {
             var skill = _skillChoices[i];
-            var selected = i == _selectedSkillIndex;
-            var y = 136 + (i - start) * 78;
-
-            DrawMenuRow(UiLayout.SelectionRowX, y - 8, w - UiLayout.SelectionRowInset, 70, selected);
-            DrawCenteredText(skill.Name, w / 2, y, 24, selected ? ColYellow : ColWhite);
-            DrawCenteredText(skill.Description, w / 2, y + 24, 16, selected ? ColLightGray : ColGray);
-            DrawCenteredText($"Current effect: {_player.GetSkillEffectText(skill)}", w / 2, y + 46, 14, selected ? ColGreen : ColDarkGreen);
-        }
-
-        if (start > 0)
-        {
-            DrawCenteredText("...more above...", w / 2, 122, 14, ColGray);
-        }
-        if (end < _skillChoices.Count)
-        {
-            DrawCenteredText("...more below...", w / 2, h - 82, 14, ColGray);
-        }
-
-        if (!string.IsNullOrWhiteSpace(_selectionMessage))
-        {
-            DrawFooterBar(UiLayout.SelectionFooterX, h - 82, w - UiLayout.SelectionFooterInset, 18);
-            DrawCenteredText(_selectionMessage, w / 2, h - 81, 13, ColLightGray);
+            var y = listTop + i * rowH;
+            DrawMenuRow(UiLayout.SelectionRowX, y - 8, w - UiLayout.SelectionRowInset, 72, selected: true);
+            DrawCenteredTextClamped(skill.Name, w / 2, y, 26, textW, ColYellow);
+            DrawCenteredTextClamped(skill.Description, w / 2, y + 28, 15, textW, ColLightGray);
+            DrawCenteredTextClamped($"Effect: {_player.GetSkillEffectText(skill)}", w / 2, y + 50, 13, textW, ColGreen);
         }
 
         DrawFooterBar(UiLayout.SelectionFooterX, h - 58, w - UiLayout.SelectionFooterInset, 18);
-        DrawCenteredText("UP/DOWN browse skills  |  ENTER learn", w / 2, h - 57, 13, ColLightGray);
+        DrawCenteredText("ENTER to continue", w / 2, h - 57, 13, ColLightGray);
     }
 
     private void DrawSpellSelection()
@@ -11077,39 +16896,44 @@ public sealed class Game : IDisposable
             return;
         }
 
-        EnsureSpellLearnSelectionVisible(_spellLearnChoices.Count);
+        var spellFooterTop = string.IsNullOrWhiteSpace(_selectionMessage) ? h - 58 : h - 82;
+        var spellVisibleCount = SpellLearnVisibleCount;
+        _spellLearnMenuOffset = ClampMenuOffsetToVisibleCount(_selectedSpellLearnIndex, _spellLearnChoices.Count, _spellLearnMenuOffset, spellVisibleCount);
         var start = _spellLearnMenuOffset;
-        var end = Math.Min(_spellLearnChoices.Count, start + SpellLearnVisibleCount);
+        var end = Math.Min(_spellLearnChoices.Count, start + spellVisibleCount);
+        var spellListTop = 134 + Math.Max(0, (spellFooterTop - 30 - 134 - (end - start) * 68) / 2);
+        var selectionRowTextW = w - UiLayout.SelectionRowInset - 24;
         for (var i = start; i < end; i++)
         {
             var spell = _spellLearnChoices[i];
             var selected = i == _selectedSpellLearnIndex;
-            var y = 134 + (i - start) * 68;
+            var y = spellListTop + (i - start) * 68;
             var tier = spell.IsCantrip ? "Cantrip" : $"Level {spell.SpellLevel}";
+            var familyLabel = SpellData.GetCombatFamilyLabel(spell);
             var canLearn = _player.CanLearnSpell(spell, out var blockReason);
             var known = _player.KnowsSpell(spell.Id);
             var nameColor = canLearn ? (selected ? ColYellow : ColWhite) : ColGray;
             var statusColor = canLearn ? ColGreen : ColRed;
 
             DrawMenuRow(UiLayout.SelectionRowX, y - 8, w - UiLayout.SelectionRowInset, 58, selected);
-            DrawCenteredText($"{spell.Name} ({tier})", w / 2, y, 24, nameColor);
-            DrawCenteredText(spell.Description, w / 2, y + 22, 16, selected ? ColLightGray : ColGray);
+            DrawCenteredTextClamped($"{spell.Name} ({tier}) [{familyLabel}]", w / 2, y, 24, selectionRowTextW, nameColor);
+            DrawCenteredTextClamped(BuildSpellEffectSummary(spell), w / 2, y + 22, 15, selectionRowTextW, selected ? ColLightGray : ColGray);
 
             var statusText = canLearn
                 ? "Learnable now"
                 : known
                     ? "Locked: Already learned."
                     : $"Locked: {blockReason}";
-            DrawCenteredText(statusText, w / 2, y + 42, 14, statusColor);
+            DrawCenteredTextClamped(statusText, w / 2, y + 42, 13, selectionRowTextW, statusColor);
         }
 
         if (start > 0)
         {
-            DrawCenteredText("...more above...", w / 2, 122, 14, ColGray);
+            DrawCenteredText("...more above...", w / 2, spellListTop - 20, 14, ColGray);
         }
         if (end < _spellLearnChoices.Count)
         {
-            DrawCenteredText("...more below...", w / 2, h - 38, 14, ColGray);
+            DrawCenteredText("...more below...", w / 2, spellListTop + (end - start) * 68 + 4, 14, ColGray);
         }
 
         if (!string.IsNullOrWhiteSpace(_selectionMessage))
@@ -11128,16 +16952,20 @@ public sealed class Game : IDisposable
 
         var w = Raylib.GetScreenWidth();
         var h = Raylib.GetScreenHeight();
+        var panelX = UiLayout.RewardPanelInsetX;
+        var panelY = UiLayout.RewardPanelInsetY;
+        var panelW = w - UiLayout.RewardPanelInsetX * 2;
+        var panelH = h - UiLayout.RewardPanelInsetY * 2;
         Raylib.DrawRectangle(0, 0, w, h, new Color(0, 0, 0, 215));
         DrawPanel(
-            UiLayout.RewardPanelInsetX,
-            UiLayout.RewardPanelInsetY,
-            w - UiLayout.RewardPanelInsetX * 2,
-            h - UiLayout.RewardPanelInsetY * 2,
+            panelX,
+            panelY,
+            panelW,
+            panelH,
             ColPanel,
             ColBorder);
 
-        DrawCenteredText(_activeRewardNode.Name, w / 2, 74, 36, ColYellow);
+        DrawCenteredTextClamped(_activeRewardNode.Name, w / 2, 74, 36, panelW - 24, ColYellow);
         var headerDescription = IsPhase3RouteChoiceActive()
             ? "Phase 3 branch decision: lock one route and accept its pressure profile."
             : IsPhase3RiskEventActive()
@@ -11149,51 +16977,77 @@ public sealed class Game : IDisposable
             : IsMilestoneCheckpointActive()
                 ? "Checkpoint interval reached. Choose one doctrine upgrade."
             : _activeRewardNode.Description;
-        DrawCenteredText(headerDescription, w / 2, 116, 18, ColLightGray);
-        DrawCenteredText($"Build: {GetRunIdentityLabel()}", w / 2, 138, 15, ColSkyBlue);
+        DrawCenteredTextClamped(headerDescription, w / 2, 116, 18, panelW - 30, ColLightGray);
+        DrawCenteredTextClamped($"Build: {GetRunIdentityLabel()}", w / 2, 138, 15, panelW - 30, ColSkyBlue);
 
         var optionNames = GetActiveRewardOptionNames();
         var optionDescriptions = GetActiveRewardOptionDescriptions();
+        var optionW = w - UiLayout.RewardOptionInset;
+        var optionTextW = Math.Max(220, optionW - 24);
 
         for (var i = 0; i < optionNames.Length; i++)
         {
             var selected = i == _selectedRewardOptionIndex;
             var rowY = 174 + i * 86;
             DrawMenuRow(UiLayout.RewardOptionX, rowY - 8, w - UiLayout.RewardOptionInset, 74, selected);
-            DrawCenteredText(optionNames[i], w / 2, rowY + 2, 26, selected ? ColYellow : ColWhite);
-            DrawCenteredText(optionDescriptions[i], w / 2, rowY + 34, 16, selected ? ColLightGray : ColGray);
+            DrawCenteredTextClamped(optionNames[i], w / 2, rowY + 2, 26, optionTextW, selected ? ColYellow : ColWhite);
+            DrawCenteredTextClamped(optionDescriptions[i], w / 2, rowY + 34, 16, optionTextW, selected ? ColLightGray : ColGray);
+        }
+
+        var detailY = 174 + optionNames.Length * 86;
+        var detailH = h - detailY - 132;
+        if (detailH >= 68)
+        {
+            DrawPanel(UiLayout.RewardOptionX, detailY, optionW, detailH, ColPanelAlt, ColBorder);
+            DrawTextClamped("Selected option", UiLayout.RewardOptionX + 12, detailY + 10, 17, optionW - 24, ColSkyBlue);
+            DrawWrappedText(
+                optionDescriptions[Math.Clamp(_selectedRewardOptionIndex, 0, optionDescriptions.Length - 1)],
+                UiLayout.RewardOptionX + 12,
+                detailY + 34,
+                optionW - 24,
+                15,
+                ColLightGray);
         }
 
         DrawFooterBar(UiLayout.RewardFooterX, h - 88, w - UiLayout.RewardFooterInset, 22);
-        DrawCenteredText(_rewardMessage, w / 2, h - 86, 14, ColLightGray);
+        DrawCenteredTextClamped(_rewardMessage, w / 2, h - 86, 14, w - UiLayout.RewardFooterInset - 24, ColLightGray);
         DrawFooterBar(UiLayout.RewardFooterX, h - 58, w - UiLayout.RewardFooterInset, 22);
-        DrawCenteredText("UP/DOWN choose reward  |  ENTER claim  |  ESC defer", w / 2, h - 56, 14, ColLightGray);
+        DrawCenteredTextClamped("UP/DOWN choose reward  |  ENTER claim  |  ESC defer", w / 2, h - 56, 14, w - UiLayout.RewardFooterInset - 24, ColLightGray);
     }
 
     private void DrawVictoryScreen()
     {
         var w = Raylib.GetScreenWidth();
         var h = Raylib.GetScreenHeight();
+        var panelW = w - UiLayout.VictoryPanelInsetX * 2;
         Raylib.DrawRectangle(0, 0, w, h, new Color(0, 0, 0, 220));
         DrawPanel(
             UiLayout.VictoryPanelInsetX,
             UiLayout.VictoryPanelInsetY,
-            w - UiLayout.VictoryPanelInsetX * 2,
+            panelW,
             h - UiLayout.VictoryPanelInsetY * 2,
             ColPanel,
             ColBorder);
 
-        DrawCenteredText("FLOOR 1 CLEARED", w / 2, 148, 52, ColYellow);
-        DrawCenteredText("The sanctum has fallen and the route is secured.", w / 2, 222, 20, ColLightGray);
+        DrawCenteredTextClamped("FLOOR 1 CLEARED", w / 2, 148, 52, panelW - 24, ColYellow);
+        DrawCenteredTextClamped("The goblin den has fallen and the floor is secure.", w / 2, 222, 20, panelW - 24, ColLightGray);
 
         var summaryY = 270;
-        DrawCenteredText($"Level {_player?.Level ?? 1}   Pack Items {GetInventoryQuantityTotal()}", w / 2, summaryY, 22, ColSkyBlue);
-        DrawCenteredText($"Archetype: {GetRunArchetypeLabel(_runArchetype)}", w / 2, summaryY + 34, 18, ColLightGray);
-        DrawCenteredText($"Relic: {GetRunRelicLabel(_runRelic)}", w / 2, summaryY + 58, 17, ColLightGray);
-        DrawCenteredText($"Route: {GetPhase3RouteLabel(_phase3RouteChoice)}  XP {_phase3XpPercentMod:+#;-#;0}%  Enemy atk +{_phase3EnemyAttackBonus}", w / 2, summaryY + 80, 16, ColLightGray);
-        DrawCenteredText($"Doctrine ranks: {GetMilestoneRanksLabel()}", w / 2, summaryY + 102, 16, ColLightGray);
-        DrawCenteredText($"Run bonuses: Melee +{_runMeleeBonus}  Spell +{_runSpellBonus}  Defense +{_runDefenseBonus}  Crit +{_runCritBonus}%  Flee +{_runFleeBonus}%", w / 2, summaryY + 126, 17, ColLightGray);
-        DrawCenteredText("Press ENTER to return to title", w / 2, h - 146, 20, ColWhite);
+        DrawCenteredTextClamped($"Level {_player?.Level ?? 1}   Pack Items {GetInventoryQuantityTotal()}", w / 2, summaryY, 22, panelW - 24, ColSkyBlue);
+        if (EnableRunMetaLayer)
+        {
+            DrawCenteredTextClamped($"Archetype: {GetRunArchetypeLabel(_runArchetype)}", w / 2, summaryY + 34, 18, panelW - 24, ColLightGray);
+            DrawCenteredTextClamped($"Relic: {GetRunRelicLabel(_runRelic)}", w / 2, summaryY + 58, 17, panelW - 24, ColLightGray);
+            DrawCenteredTextClamped($"Route: {GetPhase3RouteLabel(_phase3RouteChoice)}  XP {_phase3XpPercentMod:+#;-#;0}%  Enemy atk +{_phase3EnemyAttackBonus}", w / 2, summaryY + 80, 16, panelW - 24, ColLightGray);
+            DrawCenteredTextClamped($"Doctrine ranks: {GetMilestoneRanksLabel()}", w / 2, summaryY + 102, 16, panelW - 24, ColLightGray);
+            DrawCenteredTextClamped($"Run bonuses: Melee +{_runMeleeBonus}  Spell +{_runSpellBonus}  Defense +{_runDefenseBonus}  Crit +{_runCritBonus}%  Flee +{_runFleeBonus}%", w / 2, summaryY + 126, 17, panelW - 24, ColLightGray);
+        }
+        else
+        {
+            DrawCenteredTextClamped($"Zones cleared on one floor: Outer Warrens -> Central Warrens -> Boss Den", w / 2, summaryY + 46, 18, panelW - 24, ColLightGray);
+            DrawCenteredTextClamped($"Run bonuses: Melee +{_runMeleeBonus}  Spell +{_runSpellBonus}  Defense +{_runDefenseBonus}  Crit +{_runCritBonus}%  Flee +{_runFleeBonus}%", w / 2, summaryY + 88, 17, panelW - 24, ColLightGray);
+        }
+        DrawCenteredTextClamped("Press ENTER to return to title", w / 2, h - 146, 20, panelW - 24, ColWhite);
     }
 
     private void DrawDeathScreen()
@@ -11243,6 +17097,12 @@ public sealed class Game : IDisposable
 
     public void Dispose()
     {
+        if (_uiFontInitialized && _uiFontLoadedFromFile)
+        {
+            Raylib.UnloadFont(_uiFont);
+            _uiFontLoadedFromFile = false;
+        }
+
         _spriteLibrary.Dispose();
         _map.Dispose();
     }
@@ -11252,25 +17112,235 @@ public sealed class Game : IDisposable
         return Raylib.IsKeyPressed((KeyboardKey)key);
     }
 
-    private static void DrawCenteredText(string text, int centerX, int y, int size, Color color)
+    private static bool PressedOrRepeat(int key)
     {
-        var width = Raylib.MeasureText(text, size);
-        Raylib.DrawText(text, centerX - width / 2, y, size, color);
+        var keyboardKey = (KeyboardKey)key;
+        return Raylib.IsKeyPressed(keyboardKey) || Raylib.IsKeyPressedRepeat(keyboardKey);
     }
 
-    private static void DrawWrappedText(string text, int x, int y, int maxWidth, int size, Color color)
+    private static float GetUiTextScale()
     {
+        var screenW = Math.Max(1280, Raylib.GetScreenWidth());
+        var screenH = Math.Max(720, Raylib.GetScreenHeight());
+        var widthScale = screenW / 1366f;
+        var heightScale = screenH / 768f;
+        var baseScale = MathF.Min(widthScale, heightScale) * 1.12f;
+        return Math.Clamp(baseScale, 1.28f, 1.65f);
+    }
+
+    private static int GetEffectiveUiTextSize(int size)
+    {
+        if (size <= 0)
+        {
+            return 0;
+        }
+
+        return Math.Max(size + 4, (int)MathF.Ceiling(size * GetUiTextScale()));
+    }
+
+    // Line height for a text row: effective font size + 4px breathing room.
+    private static int UiLineH(int size) => GetEffectiveUiTextSize(size) + 4;
+
+    // Pathfinder point buy: total cost of a score relative to baseline 10.
+    // Creation floor 7 (-4 pts), creation ceiling 20 (27 pts).
+    private static int PointBuyCost(int score) => score switch
+    {
+        <= 7  => -4,
+        8     => -2,
+        9     => -1,
+        10    => 0,
+        11    => 1,
+        12    => 2,
+        13    => 3,
+        14    => 5,
+        15    => 7,
+        16    => 10,
+        17    => 13,
+        18    => 17,
+        19    => 22,
+        >= 20 => 27
+    };
+
+    private static int PointBuyCostToRaise(int currentScore) =>
+        PointBuyCost(currentScore + 1) - PointBuyCost(currentScore);
+
+    private static int PointBuyCostToLower(int currentScore) =>
+        PointBuyCost(currentScore) - PointBuyCost(currentScore - 1);
+
+    // Scale a pixel constant (margin, padding, gap) by the current UI scale.
+    private static int UiScale(int pixels) => (int)MathF.Ceiling(pixels * GetUiTextScale());
+
+    private static void EnsureUiFontLoaded()
+    {
+        if (_uiFontInitialized)
+        {
+            return;
+        }
+
+        _uiFont = Raylib.GetFontDefault();
+        foreach (var fontPath in new[] { PrimaryUiFontPath, SecondaryUiFontPath, TertiaryUiFontPath })
+        {
+            if (!System.IO.File.Exists(fontPath))
+            {
+                continue;
+            }
+
+            try
+            {
+                var loadedFont = Raylib.LoadFontEx(fontPath, 128, null, 0);
+                if (loadedFont.Texture.Id == 0)
+                {
+                    continue;
+                }
+
+                _uiFont = loadedFont;
+                _uiFontLoadedFromFile = true;
+                Raylib.SetTextureFilter(_uiFont.Texture, TextureFilter.Point);
+                break;
+            }
+            catch
+            {
+                // Fall back to the default bitmap font if system font loading fails.
+            }
+        }
+
+        _uiFontInitialized = true;
+    }
+
+    private static int MeasureUiText(string text, int size)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            return 0;
+        }
+
+        EnsureUiFontLoaded();
+        var effectiveSize = GetEffectiveUiTextSize(size);
+        return (int)MathF.Ceiling(Raylib.MeasureTextEx(_uiFont, text, effectiveSize, UiFontSpacing).X);
+    }
+
+    private static void DrawTextLine(string text, int x, int y, int size, Color color)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            return;
+        }
+
+        EnsureUiFontLoaded();
+        var effectiveSize = GetEffectiveUiTextSize(size);
+        Raylib.DrawTextEx(_uiFont, text, new System.Numerics.Vector2(x, y), effectiveSize, UiFontSpacing, color);
+    }
+
+    private static void DrawCenteredText(string text, int centerX, int y, int size, Color color)
+    {
+        var width = MeasureUiText(text, size);
+        DrawTextLine(text, centerX - width / 2, y, size, color);
+    }
+
+    private static void DrawCenteredTextClamped(string text, int centerX, int y, int size, int maxWidth, Color color)
+    {
+        var safeText = ClampTextToWidth(text, maxWidth, size);
+        DrawCenteredText(safeText, centerX, y, size, color);
+    }
+
+    private static void DrawTextClamped(string text, int x, int y, int size, int maxWidth, Color color)
+    {
+        var safeText = ClampTextToWidth(text, maxWidth, size);
+        DrawTextLine(safeText, x, y, size, color);
+    }
+
+    private static string ClampTextToWidth(string text, int maxWidth, int size)
+    {
+        if (string.IsNullOrEmpty(text) || maxWidth <= 0)
+        {
+            return string.Empty;
+        }
+
+        if (MeasureUiText(text, size) <= maxWidth)
+        {
+            return text;
+        }
+
+        const string ellipsis = "...";
+        if (MeasureUiText(ellipsis, size) > maxWidth)
+        {
+            return string.Empty;
+        }
+
+        var length = text.Length;
+        while (length > 0)
+        {
+            var candidate = $"{text[..length]}{ellipsis}";
+            if (MeasureUiText(candidate, size) <= maxWidth)
+            {
+                return candidate;
+            }
+
+            length -= 1;
+        }
+
+        return ellipsis;
+    }
+
+    private static int MeasureWrappedTextHeight(string text, int maxWidth, int size)
+    {
+        if (string.IsNullOrWhiteSpace(text) || maxWidth <= 0)
+        {
+            return 0;
+        }
+
         var words = text.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (words.Length == 0)
+        {
+            return 0;
+        }
+
+        var lineCount = 1;
+        var line = string.Empty;
+        foreach (var word in words)
+        {
+            var candidate = string.IsNullOrEmpty(line) ? word : $"{line} {word}";
+            if (MeasureUiText(candidate, size) > maxWidth && !string.IsNullOrEmpty(line))
+            {
+                lineCount += 1;
+                line = word;
+            }
+            else
+            {
+                line = candidate;
+            }
+        }
+
+        var effectiveSize = GetEffectiveUiTextSize(size);
+        return lineCount * effectiveSize + Math.Max(0, lineCount - 1) * 4;
+    }
+
+    private static int DrawWrappedText(string text, int x, int y, int maxWidth, int size, Color color)
+    {
+        if (string.IsNullOrWhiteSpace(text) || maxWidth <= 0)
+        {
+            return 0;
+        }
+
+        var words = text.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (words.Length == 0)
+        {
+            return 0;
+        }
+
         var line = string.Empty;
         var drawY = y;
+        var lineCount = 0;
+        var effectiveSize = GetEffectiveUiTextSize(size);
 
         foreach (var word in words)
         {
             var candidate = string.IsNullOrEmpty(line) ? word : $"{line} {word}";
-            if (Raylib.MeasureText(candidate, size) > maxWidth && !string.IsNullOrEmpty(line))
+            if (MeasureUiText(candidate, size) > maxWidth && !string.IsNullOrEmpty(line))
             {
-                Raylib.DrawText(line, x, drawY, size, color);
-                drawY += size + 4;
+                DrawTextLine(line, x, drawY, size, color);
+                drawY += effectiveSize + 4;
+                lineCount += 1;
                 line = word;
             }
             else
@@ -11281,8 +17351,11 @@ public sealed class Game : IDisposable
 
         if (!string.IsNullOrEmpty(line))
         {
-            Raylib.DrawText(line, x, drawY, size, color);
+            DrawTextLine(line, x, drawY, size, color);
+            lineCount += 1;
         }
+
+        return lineCount * effectiveSize + Math.Max(0, lineCount - 1) * 4;
     }
 }
 
